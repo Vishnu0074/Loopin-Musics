@@ -69,7 +69,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
              ),
              const SizedBox(height: 6),
              Text(
-               isPublic ? 'Anyone using Loopin can discover and play this playlist.' : 'Only you can see and edit this playlist.',
+               isPublic ? 'Visible in your Public playlists section on this device.' : 'Only you can see and edit this playlist.',
                style: const TextStyle(color: AppColors.muted),
              ),
              const SizedBox(height: 18),
@@ -371,7 +371,7 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
                               children: [
                                 Text(' songs', style: const TextStyle(fontWeight: FontWeight.w700)),
                                 if (widget.playlist.isPublic)
-                                  const Text('Public playlist', style: TextStyle(fontSize: 12, color: AppColors.muted))
+                                  const Text('Public playlist (this device)', style: TextStyle(fontSize: 12, color: AppColors.muted))
                                 else
                                   const Text('Private playlist', style: TextStyle(fontSize: 12, color: AppColors.muted)),
                               ],
