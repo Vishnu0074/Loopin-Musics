@@ -251,6 +251,7 @@ class RecommendationService {
   }
 
   Future<bool> toggleLike(Song song) async {
+    await _ensureLoaded();
     final liked = !isLiked(song.id);
     await syncLike(song, liked);
     return liked;
