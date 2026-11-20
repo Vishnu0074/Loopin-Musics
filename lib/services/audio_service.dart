@@ -65,8 +65,8 @@ class GlobalAudioService with WidgetsBindingObserver {
   Timer? _backgroundSyncTimer;
 
   // Maintain a substantial rolling queue without resolving every stream URL
-  // up front. Django returns a ranked candidate batch; Flutter keeps the
-  // unprocessed candidates locally and resolves only the next small group.
+  // up front. The local recommendation engine ranks candidates; the player
+  // resolves only the next small group.
   static const int _recommendationRefillThreshold = 12;
   static const int _recommendationTargetAhead = 50;
   static const int _recommendationResolvePerRequest = 12;
@@ -102,8 +102,7 @@ class GlobalAudioService with WidgetsBindingObserver {
         if (isOwner) unawaited(_syncRealtime(force: true));
       },
       onConnected: () {
-        // The backend keeps revisions in process memory; a server restart can
-        // legitimately reset the counter, so begin a fresh revision window.
+        // Start a fresh local revision window when a realtime session connects.
         _lastRealtimeRevision = 0;
         _pendingRealtimeState = null;
         _pendingRealtimePlaybackEvents.clear();
@@ -439,10 +438,8 @@ class GlobalAudioService with WidgetsBindingObserver {
       throw StateError('No playable stream was found for "${song.title}".');
     }
 
-    // Browsers can block cross-origin catalog/stream requests. Prefer Loopin's
-    // authenticated CORS-enabled stream proxy on web; keep direct provider
-    // playback first on native platforms where it is more resilient and avoids
-    // ephemeral JWT token expirations.
+    // Use the provider's direct stream URL on every platform. No catalog
+    // proxy or short-lived backend token is involved in playback.
     final playableSong = Song(
       id: song.id,
       title: TrackNormalizer.unescapeHtml(song.title),
@@ -501,7 +498,7 @@ class GlobalAudioService with WidgetsBindingObserver {
     unawaited(_syncOriginIsland(force: true));
 
     // Start personalized discovery alongside playback. A context/playlist
-    // queue is preserved, while backend recommendations fill the rolling queue.
+    // queue is preserved while local recommendations fill the rolling queue.
     _pendingRecommendationCandidates = remainingContext;
     unawaited(_ensureRecommendations(force: true));
   }
@@ -641,7 +638,7 @@ class GlobalAudioService with WidgetsBindingObserver {
     final queueGeneration = _queueGeneration;
 
     // This is a rolling queue, not a one-shot playlist. Whenever the listener
-    // gets close to the end, ask Django for another page and keep doing that
+    // gets close to the end, ask the local recommendation engine for another batch
     // until there is a healthy amount of music ahead. If stream resolution
     // rejects some candidates, later candidates are still attempted.
     var attempts = 0;
@@ -655,8 +652,8 @@ class GlobalAudioService with WidgetsBindingObserver {
 
       List<Song> recommendations;
       try {
-        // Consume the previous ranked batch before asking Django to discover
-        // more candidates. This avoids repeating the same provider searches
+        // Consume the previous ranked batch before discovering more candidates.
+        // This avoids repeating the same provider searches
         // for every +12 refill and keeps recommendation generation off the
         // playback-critical path.
         if (_pendingRecommendationCandidates.isNotEmpty) {
@@ -746,9 +743,8 @@ class GlobalAudioService with WidgetsBindingObserver {
           if (!_realtime.isPlaybackOwner || queueGeneration != _queueGeneration || !identical(_playlist, playlist)) {
           return;
         }
-          // The backend owns recommendation filtering. The queue can still
-          // change while network requests are in flight, so avoid appending a
-          // track that has already been inserted by another result batch.
+          // The queue can still change while requests are in flight, so avoid
+          // appending a track already inserted by another result batch.
           if (_queue.any((existing) => TrackNormalizer.isDuplicate(existing, playable))) {
             continue;
           }
