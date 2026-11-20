@@ -1,5 +1,3 @@
-import 'auth_service.dart';
-
 class ServiceConfig {
   final bool enabled;
   final String label;
@@ -18,59 +16,35 @@ class ServiceConfig {
   );
 }
 
+/// Local feature flags for the standalone V2 client. A backend is not required
+/// for discovery, playback, lyrics, local library or recommendations.
 class ServiceConfigService {
-  static final ServiceConfigService _i = ServiceConfigService._();
-  factory ServiceConfigService() => _i;
+  static final ServiceConfigService _instance = ServiceConfigService._();
+  factory ServiceConfigService() => _instance;
   ServiceConfigService._();
 
-  final _api = AuthService();
-  Map<String, ServiceConfig>? _cache;
-  DateTime? _at;
+  static const _defaults = <String, ServiceConfig>{
+    'streaming': ServiceConfig(enabled: true, label: 'Music streaming', message: ''),
+    'search': ServiceConfig(enabled: true, label: 'Search', message: ''),
+    'recommendations': ServiceConfig(enabled: true, label: 'Smart recommendations', message: ''),
+    'high_quality_audio': ServiceConfig(enabled: true, label: 'High quality audio', message: ''),
+    'listening_sync': ServiceConfig(enabled: true, label: 'Local listening history', message: ''),
+  };
 
-  Future<ServiceConfig?> get(String key, {bool forceRefresh = false}) async {
-    try {
-      if (forceRefresh || _cache == null || _at == null ||
-          DateTime.now().difference(_at!) > const Duration(seconds: 30)) {
-        final d = await _api.get('/catalog/config/', authenticated: false).timeout(
-          const Duration(seconds: 3),
-        );
-        final raw = Map<String, dynamic>.from(d['services'] ?? {});
-        _cache = {
-          for (final entry in raw.entries)
-            entry.key: ServiceConfig.fromJson(Map<String, dynamic>.from(entry.value as Map)),
-        };
-        _at = DateTime.now();
-      }
-      return _cache?[key];
-    } catch (_) {
-      // Fail open so a temporary config outage does not unnecessarily block playback.
-      return null;
-    }
-  }
+  Future<ServiceConfig?> get(String key, {bool forceRefresh = false}) async =>
+      _defaults[key];
 
-  /// Read the last known flag without waiting for a network request.
-  /// Before the first response, default to enabled so playback stays responsive.
-  bool enabledCached(String key) => _cache?[key]?.enabled ?? true;
+  bool enabledCached(String key) => _defaults[key]?.enabled ?? true;
 
-  /// Refresh service flags in the background; a failure retains the cache.
-  Future<void> refresh() async {
-    await get('streaming', forceRefresh: _cache == null);
-  }
+  Future<void> refresh() async {}
 
-  Future<bool> enabled(String key, {bool forceRefresh = false}) async {
-    final config = await get(key, forceRefresh: forceRefresh);
-    return config?.enabled ?? true;
-  }
+  Future<bool> enabled(String key, {bool forceRefresh = false}) async =>
+      enabledCached(key);
 
-  Future<String> message(String key) async {
-    final config = await get(key);
-    return (config?.message.trim().isNotEmpty == true)
-        ? config!.message
-        : 'This feature is temporarily unavailable.';
-  }
+  Future<String> message(String key) async =>
+      _defaults[key]?.message.isNotEmpty == true
+          ? _defaults[key]!.message
+          : 'This feature is temporarily unavailable.';
 
-  void clear() {
-    _cache = null;
-    _at = null;
-  }
+  void clear() {}
 }
