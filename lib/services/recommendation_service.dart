@@ -172,7 +172,14 @@ class RecommendationService {
 
     final ranked = unique.values.map((song) => (
       song: song,
-      score: _score(song, current) +\n          likedSeeds.map((seed) => _score(song, seed) * 0.65).fold<double>(0, (a, b) => a > b ? a : b) +\n          historySeeds.take(12).map((seed) => _score(song, seed) * 0.35).fold<double>(0, (a, b) => a > b ? a : b),
+      score: _score(song, current) +
+          likedSeeds
+              .map((seed) => _score(song, seed) * 0.65)
+              .fold<double>(0, (a, b) => a > b ? a : b) +
+          historySeeds
+              .take(12)
+              .map((seed) => _score(song, seed) * 0.35)
+              .fold<double>(0, (a, b) => a > b ? a : b),
     )).toList()
       ..sort((a, b) => b.score.compareTo(a.score));
 
