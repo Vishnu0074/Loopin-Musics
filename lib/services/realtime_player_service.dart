@@ -60,7 +60,10 @@ class RealtimePlayerService {
     if (_modeInitialized) return;
     if (_modeLoadJob != null) return _modeLoadJob;
     _modeLoadJob = () async {
-      _standaloneMode = (await _storage.read(key: _standaloneStorageKey)) == 'true';
+      final savedMode = await _storage.read(key: _standaloneStorageKey);
+      // V2 is local-first. Enable network sync only when the user explicitly
+      // turns off standalone mode and configures a compatible backend.
+      _standaloneMode = savedMode == null ? true : savedMode == 'true';
       _modeInitialized = true;
     }();
     try {
