@@ -1,355 +1,280 @@
+import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
-import 'package:dart_des/dart_des.dart';
+
 import 'package:http/http.dart' as http;
+
 import '../models/song.dart';
-import 'auth_service.dart';
 import 'debug_log_service.dart';
-import 'track_normalizer.dart';
 
-final _debugLog = LoopinDebugLogService.instance;
-
+/// Flutter client for Monochrome's open-source Tracks Streamer API.
+///
+/// Search metadata and stream resolution both use the Tracks Streamer contract:
+/// GET /search/tracks?q=...&limit=... and GET /track/{trackId}.
 class MonochromeApi {
-  static const _baseUrl = 'https://www.jiosaavn.com/api.php';
-  static const _jioSaavnDesKey = '38346591';
+  static const String baseUrl = String.fromEnvironment(
+    'MONOCHROME_TRACKS_API',
+    defaultValue: 'https://tracks.monochrome.st',
+  );
 
-  Future<List<Song>> search(String query, {int pages = 2, int limit = 20}) async {
+  final http.Client _client;
+  final Map<String, List<Song>> _searchCache = {};
+  final Map<String, String?> _streamCache = {};
+  final Set<String> _nativeTrackIds = {};
+  final Map<String, Future<List<Song>>> _inFlight = {};
+  final LoopinDebugLogService _log = LoopinDebugLogService.instance;
+
+  MonochromeApi({http.Client? client}) : _client = client ?? http.Client();
+
+  Future<List<Song>> search(
+    String query, {
+    int pages = 2,
+    int limit = 20,
+  }) async {
     final clean = query.trim();
     if (clean.isEmpty) return const [];
-    final results = <Song>[];
-    final seen = <String>{};
-    for (var page = 1; page <= pages; page++) {
-      final songs = await searchPage(clean, page: page, limit: limit);
-      for (final song in songs) {
-        if (seen.add(song.id)) results.add(song);
-      }
-    }
-    return results;
+    final requested = (pages * limit).clamp(1, 100);
+    return searchPage(clean, page: 1, limit: requested);
   }
 
-  Future<List<Song>> searchPage(String query, {int page = 1, int limit = 20}) async {
-    final stopwatch = Stopwatch()..start();
+  /// The Tracks Streamer API exposes a bounded result limit rather than a
+  /// page token. Fetching page N therefore requests N * limit results and
+  /// slices the requested window locally, keeping the API contract compatible.
+  Future<List<Song>> searchPage(
+    String query, {
+    int page = 1,
+    int limit = 20,
+  }) async {
     final clean = query.trim();
     if (clean.isEmpty) return const [];
-
-    if (kIsWeb) {
-      return _searchWebPage(clean, page: page, limit: limit);
-    }
-
-    try {
-      final uri = Uri.parse(_baseUrl).replace(queryParameters: {
-        '__call': 'search.getResults',
-        'q': clean,
-        'n': limit.clamp(1, 50).toString(),
-        'p': page.toString(),
-        '_format': 'json',
-        '_marker': '0',
-        'cc': 'in',
-        'ctx': 'web6dot0',
-        'api_version': '4',
-      });
-      final response = await http.get(uri, headers: const {'User-Agent': 'Mozilla/5.0'});
-      if (response.statusCode != 200) {
-        throw Exception('JioSaavn search HTTP ${response.statusCode}');
-      }
-      final decoded = jsonDecode(response.body);
-      if (decoded is! Map) throw const FormatException('JioSaavn search response is not an object');
-      final node = decoded['results'];
-      final rawResults = node is List
-          ? node
-          : decoded['songs'] is Map && decoded['songs']['data'] is List
-              ? decoded['songs']['data'] as List
-              : const [];
-
-      final songs = <Song>[];
-      final seen = <String>{};
-      for (final raw in rawResults) {
-        if (raw is! Map) continue;
-        final item = Map<String, dynamic>.from(raw);
-        final id = _string(item, 'id');
-        final title = _firstString(item, ['song', 'title', 'name']);
-        if (id.isEmpty || title.isEmpty || !seen.add(id)) continue;
-        final more = item['more_info'] is Map
-            ? Map<String, dynamic>.from(item['more_info'] as Map)
-            : <String, dynamic>{};
-        final artist = _firstString(item, ['primary_artists', 'singers', 'artist', 'subtitle']);
-        final album = _firstString(item, ['album']).isNotEmpty
-            ? _firstString(item, ['album'])
-            : _string(more, 'album');
-
-        final encrypted = _firstString(more, ['encrypted_media_url', 'encrypted_media_path', 'encrypted_url']).isNotEmpty
-            ? _firstString(more, ['encrypted_media_url', 'encrypted_media_path', 'encrypted_url'])
-            : _firstString(item, ['encrypted_media_url', 'encrypted_media_path', 'encrypted_url']);
-        var mediaUrl = '';
-        if (encrypted.isNotEmpty) {
-          final decrypted = _decryptMediaUrl(encrypted);
-          if (_isHttpUrl(decrypted)) {
-            mediaUrl = _selectQuality(decrypted, 'auto', _string(more, '320kbps').toLowerCase() == 'true');
-          }
-        }
-        if (mediaUrl.isEmpty) {
-          mediaUrl = _firstHttpUrl([_string(more, 'media_preview_url'), _string(more, 'vlink'), _string(item, 'media_preview_url')]) ?? '';
-        }
-
-        songs.add(Song(
-          id: id,
-          title: title,
-          artist: artist.isEmpty ? 'Unknown Artist' : artist,
-          album: album.isEmpty ? null : album,
-          isrc: _firstString(item, ['isrc', 'isrc_code']).isNotEmpty
-              ? _firstString(item, ['isrc', 'isrc_code'])
-              : _firstString(more, ['isrc', 'isrc_code']),
-          imageUrl: _highResArtwork(_firstString(item, ['image'])),
-          mediaUrl: mediaUrl,
-          language: _firstString(item, ['language']).isNotEmpty
-              ? _firstString(item, ['language'])
-              : _string(more, 'language'),
-          durationSeconds: int.tryParse(_firstString(item, ['duration']).isNotEmpty
-              ? _firstString(item, ['duration'])
-              : _string(more, 'duration')),
-          tempo: double.tryParse(_firstString(item, ['tempo']).isNotEmpty
-              ? _firstString(item, ['tempo'])
-              : _firstString(more, ['tempo', 'bpm'])),
-          genre: _firstString(item, ['genre', 'genres', 'category']).isNotEmpty
-              ? _firstString(item, ['genre', 'genres', 'category'])
-              : _firstString(more, ['genre', 'genres', 'category']),
-          lyricsId: _firstString(item, ['lyrics_id']).isNotEmpty
-              ? _firstString(item, ['lyrics_id'])
-              : _string(more, 'lyrics_id'),
-        ));
-      }
-      _debugLog.success('JIOSAAVN SEARCH page=$page parsed ${songs.length} songs in ${stopwatch.elapsedMilliseconds}ms');
-      return songs;
-    } finally {
-      stopwatch.stop();
-    }
+    final safePage = page.clamp(1, 100);
+    final safeLimit = limit.clamp(1, 50);
+    final totalLimit = (safePage * safeLimit).clamp(1, 100);
+    final all = await _searchTracks(clean, totalLimit);
+    final start = (safePage - 1) * safeLimit;
+    if (start >= all.length) return const [];
+    return all.skip(start).take(safeLimit).toList(growable: false);
   }
 
-  Future<List<Song>> _searchWebPage(String query, {required int page, required int limit}) async {
-    final response = await AuthService().get(
-      '/catalog/music/search/?q=${Uri.encodeQueryComponent(query)}&page=$page&limit=$limit',
-      authenticated: false,
+  Future<List<Song>> _searchTracks(String query, int limit) {
+    final key = '${query.toLowerCase()}::$limit';
+    final cached = _searchCache[key];
+    if (cached != null) return Future.value(cached);
+    final pending = _inFlight[key];
+    if (pending != null) return pending;
+
+    final request = _fetchTracks(query, limit);
+    _inFlight[key] = request;
+    return request.whenComplete(() => _inFlight.remove(key));
+  }
+
+  Future<List<Song>> _fetchTracks(String query, int limit) async {
+    final uri = Uri.parse('$baseUrl/search/tracks').replace(
+      queryParameters: {'q': query, 'limit': '$limit'},
     );
-    final rows = response['results'];
-    if (rows is! List) return const [];
-    return rows.whereType<Map>().map((raw) {
-      final item = Map<String, dynamic>.from(raw);
-      return Song(
-        id: _string(item, 'id'),
-        title: _string(item, 'title'),
-        artist: _string(item, 'artist').isEmpty ? 'Unknown Artist' : _string(item, 'artist'),
-        album: _string(item, 'album').isEmpty ? null : _string(item, 'album'),
-        isrc: _firstString(item, ['isrc', 'isrc_code']),
-        lyricsId: _string(item, 'lyrics_id'),
-        imageUrl: _highResArtwork(_string(item, 'image_url').isNotEmpty ? _string(item, 'image_url') : _string(item, 'imageUrl')),
-        mediaUrl: _string(item, 'media_url'),
-        durationSeconds: int.tryParse(_string(item, 'duration')),
-        language: _string(item, 'language'),
-        tempo: double.tryParse(_string(item, 'tempo')),
-        genre: _string(item, 'genre').isNotEmpty ? _string(item, 'genre') : _string(item, 'category'),
-      );
-    }).where((song) => song.id.isNotEmpty && song.title.isNotEmpty).toList();
+    final response = await _getWithRetry(uri);
+    if (response.statusCode != 200) {
+      throw Exception('Monochrome search failed (HTTP ${response.statusCode}).');
+    }
+
+    final decoded = jsonDecode(response.body);
+    final root = decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{};
+    final rawTracks = root['tracks'] is List
+        ? root['tracks'] as List
+        : root['items'] is List
+            ? root['items'] as List
+            : const [];
+
+    final songs = <Song>[];
+    final seen = <String>{};
+    for (final raw in rawTracks) {
+      if (raw is! Map) continue;
+      final song = _normalizeTrack(Map<String, dynamic>.from(raw));
+      if (song == null || !seen.add(song.id)) continue;
+      _nativeTrackIds.add(song.id);
+      songs.add(song);
+    }
+    _searchCache['${query.toLowerCase()}::$limit'] = songs;
+    if (_searchCache.length > 80) _searchCache.remove(_searchCache.keys.first);
+    _log.success('MONOCHROME search: ${songs.length} tracks for "$query"');
+    return songs;
+  }
+
+  Future<http.Response> _getWithRetry(Uri uri) async {
+    Object? lastError;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        final response = await _client
+            .get(uri, headers: const {'Accept': 'application/json'})
+            .timeout(const Duration(seconds: 18));
+        if ((response.statusCode == 502 ||
+                response.statusCode == 503 ||
+                response.statusCode == 504) &&
+            attempt < 2) {
+          await Future<void>.delayed(Duration(milliseconds: 250 * (attempt + 1)));
+          continue;
+        }
+        return response;
+      } catch (error) {
+        lastError = error;
+        if (attempt == 2) rethrow;
+        await Future<void>.delayed(Duration(milliseconds: 250 * (attempt + 1)));
+      }
+    }
+    throw Exception('Unable to reach Monochrome Tracks Streamer: $lastError');
+  }
+
+  Song? _normalizeTrack(Map<String, dynamic> item) {
+    String firstString(Iterable<dynamic> values) {
+      for (final value in values) {
+        final text = value?.toString().trim() ?? '';
+        if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
+      }
+      return '';
+    }
+
+    final id = firstString([item['trackId'], item['id']]);
+    final title = firstString([item['title'], item['name']]);
+    if (id.isEmpty || title.isEmpty) return null;
+
+    final artists = item['artists'] is List ? item['artists'] as List : const [];
+    final artistNames = <String>[];
+    for (final artist in artists) {
+      if (artist is Map) {
+        final name = firstString([artist['name'], artist['displayName']]);
+        if (name.isNotEmpty) artistNames.add(name);
+      }
+    }
+    final rawArtistNames = item['artistNames'];
+    if (artistNames.isEmpty && rawArtistNames is List) {
+      artistNames.addAll(rawArtistNames.map((value) => value.toString()).where((value) => value.trim().isNotEmpty));
+    }
+    final artist = firstString([
+      artistNames.isNotEmpty ? artistNames.join(', ') : null,
+      item['artist'],
+      item['artistName'],
+      item['primaryArtist'],
+    ]);
+    final album = firstString([item['albumTitle'], item['releaseTitle'], item['album'] is Map ? item['album']['title'] : item['album']]);
+    final artwork = firstString([item['artwork'], item['cover'], item['image'], item['thumbnail']]);
+    final durationRaw = item['duration'];
+    final durationValue = durationRaw is num ? durationRaw.toDouble() : double.tryParse(durationRaw?.toString() ?? '');
+    final duration = durationValue == null
+        ? null
+        : (durationValue > 1000 ? (durationValue / 1000).round() : durationValue.round());
+
+    return Song(
+      id: id,
+      title: title,
+      artist: artist.isEmpty ? 'Unknown Artist' : artist,
+      album: album.isEmpty ? null : album,
+      imageUrl: artwork,
+      mediaUrl: '$baseUrl/track/${Uri.encodeComponent(id)}',
+      isrc: firstString([item['isrc'], item['isrcCode']]).isEmpty ? null : firstString([item['isrc'], item['isrcCode']]),
+      language: firstString([item['language']]).isEmpty ? null : firstString([item['language']]),
+      durationSeconds: duration,
+      tempo: (item['tempo'] ?? item['bpm']) is num
+          ? ((item['tempo'] ?? item['bpm']) as num).toDouble()
+          : double.tryParse((item['tempo'] ?? item['bpm'])?.toString() ?? ''),
+      genre: firstString([item['genre'], item['category']]).isEmpty ? null : firstString([item['genre'], item['category']]),
+      lyricsId: firstString([item['lyricsId'], item['lyrics_id']]).isEmpty ? null : firstString([item['lyricsId'], item['lyrics_id']]),
+    );
   }
 
   Future<String?> resolveStream(Song song, {String quality = 'auto'}) async {
-    // Search and recommendation responses already carry a resolved direct provider
-    // URL. Reuse it on every platform, unless it is a backend proxy stream URL with
-    // an ephemeral or expired token.
-    if (_isHttpUrl(song.mediaUrl) && !song.mediaUrl.contains('/catalog/music/stream/')) {
-      final safeUrl = song.mediaUrl.startsWith('http://')
-          ? song.mediaUrl.replaceFirst('http://', 'https://')
-          : song.mediaUrl;
-      return _selectQuality(
-        safeUrl,
-        quality,
-        safeUrl.contains('_320'),
-      );
-    }
+    final cached = _streamCache[song.id];
+    if (cached != null) return cached;
 
-    // On web, resolve missing URLs through our same-origin catalog endpoint.
-    if (kIsWeb && song.id.trim().isNotEmpty) {
-      try {
-        final response = await AuthService().get(
-          '/catalog/music/stream/${Uri.encodeComponent(song.id)}/',
-          authenticated: false,
-        );
-        final url = _string(response, 'media_url');
-        if (_isHttpUrl(url)) return url;
-      } catch (error) {
-        _debugLog.warning('Catalog stream resolution failed: $error');
+    final supplied = Uri.tryParse(song.mediaUrl);
+    if (supplied != null && (supplied.scheme == 'https' || supplied.scheme == 'http')) {
+      if (_nativeTrackIds.contains(song.id) || song.mediaUrl.contains('/track/')) {
+        _streamCache[song.id] = song.mediaUrl;
+        return song.mediaUrl;
       }
-      return null;
     }
 
-    try {
-      if (song.id.trim().isNotEmpty) {
-        final uri = Uri.parse(_baseUrl).replace(queryParameters: {
-          '__call': 'song.getDetails',
-          'pids': song.id,
-          '_format': 'json',
-          '_marker': '0',
-          'cc': 'in',
-          'ctx': 'web6dot0',
-          'api_version': '4',
-        });
-        final response = await http.get(uri, headers: const {'User-Agent': 'Mozilla/5.0'});
-        if (response.statusCode == 200) {
-          final decoded = jsonDecode(response.body);
-          if (decoded is Map) {
-            final songs = decoded['songs'];
-            Map? rawSong;
-            if (songs is List && songs.isNotEmpty && songs.first is Map) {
-              rawSong = songs.first as Map;
-            } else if (songs is Map && songs.isNotEmpty) {
-              rawSong = songs.values.firstWhere((v) => v is Map, orElse: () => null) as Map?;
-            } else if (decoded[song.id] is Map) {
-              rawSong = decoded[song.id] as Map;
-            } else if (decoded['data'] is List && (decoded['data'] as List).isNotEmpty) {
-              rawSong = (decoded['data'] as List).first as Map?;
-            }
-            if (rawSong != null) {
-              final data = Map<String, dynamic>.from(rawSong);
-              final more = data['more_info'] is Map ? Map<String, dynamic>.from(data['more_info'] as Map) : <String, dynamic>{};
-              final encrypted = _firstString(more, ['encrypted_media_url', 'encrypted_media_path', 'encrypted_url']).isNotEmpty
-                  ? _firstString(more, ['encrypted_media_url', 'encrypted_media_path', 'encrypted_url'])
-                  : _firstString(data, ['encrypted_media_url', 'encrypted_media_path', 'encrypted_url']);
-              final is320 = _string(more, '320kbps').toLowerCase() == 'true';
-              if (encrypted.isNotEmpty) {
-                final decrypted = _decryptMediaUrl(encrypted);
-                if (_isHttpUrl(decrypted)) {
-                  return _selectQuality(decrypted, quality, is320);
-                }
-              }
-              final fallbackUrl = _firstHttpUrl([_string(more, 'media_preview_url'), _string(more, 'vlink'), _string(data, 'media_preview_url')]);
-              if (fallbackUrl != null) return fallbackUrl;
-            }
-          }
-        }
-      }
-      if (_isHttpUrl(song.mediaUrl) && !song.mediaUrl.contains('/catalog/music/stream/')) {
-        final safeUrl = song.mediaUrl.startsWith('http://')
-            ? song.mediaUrl.replaceFirst('http://', 'https://')
-            : song.mediaUrl;
-        final has320 = safeUrl.contains('_320');
-        return _selectQuality(safeUrl, quality, has320);
-      }
-      return null;
-
-    } catch (error, stack) {
-      _debugLog.error('JIOSAAVN PLAY resolve failed: $error');
-      _debugLog.error(_oneLineStack(stack));
-    }
-
-    // Native clients can recover through the backend if the direct provider
-    // details request fails or returns an incomplete payload.
-    try {
-      if (song.id.trim().isNotEmpty) {
-        final response = await AuthService().get(
-          '/catalog/music/stream/${Uri.encodeComponent(song.id)}/',
-          authenticated: false,
-        );
-        var url = _string(response, 'media_url');
-        if (url.startsWith('http://')) {
-          url = url.replaceFirst('http://', 'https://');
-        }
-        if (_isHttpUrl(url)) return url;
-      }
-    } catch (error) {
-      _debugLog.warning('Backend stream fallback failed: $error');
-    }
-
-    if (_isHttpUrl(song.mediaUrl) && !song.mediaUrl.contains('/catalog/music/stream/')) {
-      final safeUrl = song.mediaUrl.startsWith('http://')
-          ? song.mediaUrl.replaceFirst('http://', 'https://')
-          : song.mediaUrl;
-      return _selectQuality(
-        safeUrl,
-        quality,
-        safeUrl.contains('_320'),
-      );
-    }
-    return null;
-  }
-
-  Future<String?> fetchLyricsId(String songId) async {
-    if (songId.trim().isEmpty) return null;
-    try {
-      final uri = Uri.parse(_baseUrl).replace(queryParameters: {
-        '__call': 'song.getDetails', 'pids': songId, '_format': 'json', '_marker': '0',
-        'cc': 'in', 'ctx': 'web6dot0', 'api_version': '4',
-      });
-      final response = await http.get(uri, headers: const {'User-Agent': 'Mozilla/5.0'});
-      if (response.statusCode != 200) return null;
-      final decoded = jsonDecode(response.body);
-      final songs = decoded is Map ? decoded['songs'] : null;
-      final raw = songs is List && songs.isNotEmpty ? songs.first : null;
-      if (raw is! Map) return null;
-      final more = raw['more_info'] is Map ? Map<String, dynamic>.from(raw['more_info'] as Map) : <String, dynamic>{};
-      return _firstString(Map<String, dynamic>.from(raw), ['lyrics_id']).isNotEmpty
-          ? _firstString(Map<String, dynamic>.from(raw), ['lyrics_id'])
-          : _string(more, 'lyrics_id');
-    } catch (_) {
-      return null;
-    }
-  }
-
-  String _decryptMediaUrl(String encryptedUrl) {
-    try {
-      final encryptedBytes = base64.decode(encryptedUrl);
-      final des = DES(key: _jioSaavnDesKey.codeUnits, mode: DESMode.ECB);
-      final decryptedBytes = des.decrypt(encryptedBytes);
-      var url = utf8.decode(decryptedBytes).trim().replaceAll(RegExp(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]'), '');
-      if (url.startsWith('http://')) {
-        url = url.replaceFirst('http://', 'https://');
-      }
+    // A result originating from Tracks Streamer can be streamed directly.
+    if (_nativeTrackIds.contains(song.id) || song.id.startsWith('tracks:')) {
+      final id = song.id.replaceFirst(RegExp(r'^tracks:(?:track:)?'), '');
+      final url = '$baseUrl/track/${Uri.encodeComponent(id)}';
+      _streamCache[song.id] = url;
       return url;
-    } catch (_) {
-      return '';
+    }
+
+    // Resolve imported/external metadata to a matching Tracks Streamer ID.
+    final query = '${song.artist} ${song.title}'.trim();
+    if (query.isEmpty) return null;
+    try {
+      final candidates = await _searchTracks(query, 12);
+      Song? best;
+      var bestScore = 0;
+      for (final candidate in candidates) {
+        final score = _scoreCandidate(candidate, song);
+        if (score > bestScore) {
+          bestScore = score;
+          best = candidate;
+        }
+      }
+      if (best == null || bestScore < 85) {
+        _streamCache[song.id] = null;
+        return null;
+      }
+      final url = '$baseUrl/track/${Uri.encodeComponent(best.id)}';
+      _streamCache[song.id] = url;
+      return url;
+    } catch (error) {
+      _log.warning('MONOCHROME stream resolution failed for ${song.title}: $error');
+      return null;
     }
   }
 
-  String _selectQuality(String url, String quality, bool has320) {
-    if (quality == 'auto') return has320 ? _replaceQuality(url, '320') : url;
-    if (quality == '320' && !has320) return url;
-    return _replaceQuality(url, quality);
-  }
+  int _scoreCandidate(Song candidate, Song target) {
+    final targetIsrc = (target.isrc ?? '').trim().toLowerCase();
+    final candidateIsrc = (candidate.isrc ?? '').trim().toLowerCase();
+    if (targetIsrc.isNotEmpty && targetIsrc == candidateIsrc) return 200;
 
-  String _replaceQuality(String url, String quality) => url.replaceFirst(RegExp(r'_(96|160|320)(?=[._])'), '_$quality');
+    String clean(String value) => value
+        .toLowerCase()
+        .replaceAll(RegExp(r'\b(feat|featuring|ft)\.?\s+.*$'), '')
+        .replaceAll(RegExp(r'[\(\[\{].*?[\)\]\}]'), '')
+        .replaceAll(RegExp(r'[^a-z0-9]'), '');
 
-  String _highResArtwork(String url) {
-    if (url.isEmpty) return url;
-    return url.replaceFirst(
-      RegExp(r'(?<!\d)(50|150|320|500)x(?:50|150|320|500)(?=\.)'),
-      '500x500',
-    );
-  }
-
-  String _string(Map<String, dynamic> map, String key) =>
-      TrackNormalizer.unescapeHtml(map[key]?.toString().trim() ?? '');
-
-  String _firstString(Map<String, dynamic> map, Iterable<String> keys) {
-    for (final key in keys) {
-      final value = _string(map, key);
-      if (value.isNotEmpty) return value;
+    final targetTitle = clean(target.title);
+    final candidateTitle = clean(candidate.title);
+    var score = 0;
+    if (targetTitle == candidateTitle && targetTitle.isNotEmpty) {
+      score += 100;
+    } else if (targetTitle.isNotEmpty &&
+        (targetTitle.contains(candidateTitle) || candidateTitle.contains(targetTitle))) {
+      score += 65;
     }
-    return '';
-  }
 
-  String? _firstHttpUrl(Iterable<String> values) {
-    for (final value in values) {
-      if (_isHttpUrl(value)) {
-        return value.startsWith('http://')
-            ? value.replaceFirst('http://', 'https://')
-            : value;
+    final targetArtists = clean(target.artist);
+    final candidateArtists = clean(candidate.artist);
+    if (targetArtists.isNotEmpty &&
+        (candidateArtists.contains(targetArtists) || targetArtists.contains(candidateArtists))) {
+      score += 50;
+    }
+    final targetDuration = target.durationSeconds ?? 0;
+    final candidateDuration = candidate.durationSeconds ?? 0;
+    if (targetDuration > 0 && candidateDuration > 0) {
+      final difference = (targetDuration - candidateDuration).abs();
+      if (difference <= 3) {
+        score += 25;
+      } else if (difference <= 7) {
+        score += 10;
       }
     }
-    return null;
+    return score;
   }
 
-  bool _isHttpUrl(String value) {
-    final uri = Uri.tryParse(value);
-    return uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
+  Future<String?> fetchLyricsId(String songId) async => null;
+
+  void clearCache() {
+    _searchCache.clear();
+    _streamCache.clear();
+    _nativeTrackIds.clear();
+    _inFlight.clear();
   }
 
-  String _oneLineStack(StackTrace stack) => stack.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
+  void dispose() => _client.close();
 }
