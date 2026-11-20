@@ -138,12 +138,18 @@ class RecommendationService {
       if (id.isNotEmpty) excluded.add(id);
     }
 
-    final queries = <String>{
-      current.artist.trim(),
-      if ((current.genre ?? '').trim().isNotEmpty) current.genre!.trim(),
-      if ((current.language ?? '').trim().isNotEmpty) current.language!.trim(),
-      current.title.trim(),
-    }.where((q) => q.length >= 2).take(4).toList();
+    final likedSeeds = await loadLikedSongs();
+    final historySeeds = await loadHistory(limit: 25);
+    final seeds = <Song>[current, ...likedSeeds.take(12), ...historySeeds.take(20)];
+
+    final queries = <String>{};
+    for (final seed in seeds) {
+      if (seed.artist.trim().length >= 2) queries.add(seed.artist.trim());
+      if ((seed.genre ?? '').trim().length >= 2) queries.add(seed.genre!.trim());
+      if ((seed.language ?? '').trim().length >= 2) queries.add(seed.language!.trim());
+      if (seed.title.trim().length >= 2) queries.add(seed.title.trim());
+      if (queries.length >= 10) break;
+    }
 
     final fetched = <Song>[];
     for (final query in queries) {
@@ -166,7 +172,7 @@ class RecommendationService {
 
     final ranked = unique.values.map((song) => (
       song: song,
-      score: _score(song, current),
+      score: _score(song, current) +\n          likedSeeds.map((seed) => _score(song, seed) * 0.65).fold<double>(0, (a, b) => a > b ? a : b) +\n          historySeeds.take(12).map((seed) => _score(song, seed) * 0.35).fold<double>(0, (a, b) => a > b ? a : b),
     )).toList()
       ..sort((a, b) => b.score.compareTo(a.score));
 
