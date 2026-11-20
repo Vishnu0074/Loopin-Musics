@@ -1,0 +1,5 @@
+import 'dart:convert';
+import 'app_storage.dart';
+import '../models/audio_settings.dart';
+import 'auth_service.dart';
+class AudioSettingsService{static final AudioSettingsService _i=AudioSettingsService._();factory AudioSettingsService()=>_i;AudioSettingsService._();final AuthService _api=AuthService();final _storage=AppStorage();static const _key='loopin_audio_settings';Future<AudioSettings> load()async{try{final d=await _api.get('/listening/settings/audio/');final s=AudioSettings.fromJson(d);await _cache(s);return s;}catch(_){try{final raw=await _storage.read(key:_key);if(raw!=null)return AudioSettings.fromJson(jsonDecode(raw));}catch(_){}return const AudioSettings();}}Future<void> save(AudioSettings s)async{await _cache(s);try{await _api.patch('/listening/settings/audio/',s.toJson());}catch(_){}}Future<void> _cache(AudioSettings s)=>_storage.write(key:_key,value:jsonEncode(s.toJson()));}

@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Outer Card Background -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:startColor="#1B1626"
+                android:centerColor="#13101C"
+                android:endColor="#0C0B12"
+                android:angle="135" />
+            <corners android:radius="20dp" />
+            <stroke
+                android:width="1.2dp"
+                android:color="#362C4C" />
+        </shape>
+    </item>
+
+    <!-- Header Accent Bar -->
+    <item
+        android:top="14dp"
+        android:left="16dp"
+        android:width="90dp"
+        android:height="8dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#FF4081" />
+            <corners android:radius="4dp" />
+        </shape>
+    </item>
+
+    <!-- Subtitle on Right -->
+    <item
+        android:top="14dp"
+        android:right="16dp"
+        android:width="60dp"
+        android:height="8dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#6B627C" />
+            <corners android:radius="4dp" />
+        </shape>
+    </item>
+
+    <!-- Inner Lyrics Card Container -->
+    <item
+        android:top="32dp"
+        android:bottom="14dp"
+        android:left="14dp"
+        android:right="14dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#1F1A2C" />
+            <corners android:radius="12dp" />
+            <stroke
+                android:width="1dp"
+                android:color="#322846" />
+        </shape>
+    </item>
+
+    <!-- Active Lyric Line 1 (Vibrant Accent Glow) -->
+    <item
+        android:top="46dp"
+        android:left="26dp"
+        android:right="50dp"
+        android:height="10dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#FF4081" />
+            <corners android:radius="5dp" />
+        </shape>
+    </item>
+
+    <!-- Lyric Line 2 -->
+    <item
+        android:top="64dp"
+        android:left="26dp"
+        android:right="30dp"
+        android:height="10dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#FFFFFF" />
+            <corners android:radius="5dp" />
+        </shape>
+    </item>
+
+    <!-- Lyric Line 3 -->
+    <item
+        android:top="82dp"
+        android:left="26dp"
+        android:right="70dp"
+        android:height="8dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#8A8298" />
+            <corners android:radius="4dp" />
+        </shape>
+    </item>
+</layer-list>

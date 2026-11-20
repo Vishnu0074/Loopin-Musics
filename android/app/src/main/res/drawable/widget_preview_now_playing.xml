@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Outer Card Background -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:startColor="#1B1626"
+                android:centerColor="#13101C"
+                android:endColor="#0C0B12"
+                android:angle="135" />
+            <corners android:radius="20dp" />
+            <stroke
+                android:width="1.2dp"
+                android:color="#362C4C" />
+        </shape>
+    </item>
+
+    <!-- Header Accent Bar -->
+    <item
+        android:top="14dp"
+        android:left="16dp"
+        android:width="80dp"
+        android:height="8dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#FF4081" />
+            <corners android:radius="4dp" />
+        </shape>
+    </item>
+
+    <!-- Album Art Placeholder -->
+    <item
+        android:top="34dp"
+        android:left="16dp"
+        android:width="44dp"
+        android:height="44dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#241E34" />
+            <corners android:radius="10dp" />
+            <stroke
+                android:width="1dp"
+                android:color="#3B2F54" />
+        </shape>
+    </item>
+
+    <!-- Track Title Bar -->
+    <item
+        android:top="38dp"
+        android:left="68dp"
+        android:right="20dp"
+        android:height="12dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#FFFFFF" />
+            <corners android:radius="6dp" />
+        </shape>
+    </item>
+
+    <!-- Artist Subtitle Bar -->
+    <item
+        android:top="56dp"
+        android:left="68dp"
+        android:right="60dp"
+        android:height="8dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#A09AA8" />
+            <corners android:radius="4dp" />
+        </shape>
+    </item>
+
+    <!-- Play Button Accent Circle -->
+    <item
+        android:top="86dp"
+        android:gravity="center_horizontal"
+        android:width="36dp"
+        android:height="36dp">
+        <shape android:shape="oval">
+            <gradient
+                android:startColor="#FF4081"
+                android:endColor="#D81B60"
+                android:angle="135" />
+        </shape>
+    </item>
+</layer-list>

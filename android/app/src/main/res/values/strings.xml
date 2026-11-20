@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Loopin</string>
+    <string name="widget_now_playing_title">Loopin · Now Playing</string>
+    <string name="widget_now_playing_desc">Control playback, skip tracks, and view current song info</string>
+    <string name="widget_lyrics_title">Loopin · Live Lyrics</string>
+    <string name="widget_lyrics_desc">Real-time synchronized lyrics on your home screen</string>
+    <string name="widget_stats_title">Loopin · Listening Stats</string>
+    <string name="widget_stats_desc">Track listening minutes, streak, and top played songs</string>
+</resources>
