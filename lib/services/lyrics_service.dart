@@ -89,8 +89,7 @@ class LyricsService {
     final cleanTitle = TrackNormalizer.normalizeTitle(song.title);
     final cleanArtist = TrackNormalizer.primaryArtist(song.artist);
 
-    // LRCLIB provides timed and plain lyrics without requiring the old Loopin
-    // backend or a JioSaavn-specific track identifier.
+    // LRCLIB provides timed and plain lyrics without requiring a backend.
     try {
       final exact = await _fetchLrclib(cleanTitle, cleanArtist, song.durationSeconds);
       if (exact != null && exact.lines.isNotEmpty) {
