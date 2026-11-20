@@ -1,10 +1,7 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/song.dart';
 import 'debug_log_service.dart';
-import 'monochrome_api.dart';
-import 'auth_service.dart';
 import 'track_normalizer.dart';
 
 final _lyricsLog = LoopinDebugLogService.instance;
@@ -40,8 +37,6 @@ class LyricsData {
 }
 
 class LyricsService {
-  static const _jioSaavnBaseUrl = 'https://www.jiosaavn.com/api.php';
-  final MonochromeApi _api = MonochromeApi();
   static final Map<String, LyricsData> _cache = {};
   static final Map<String, Future<LyricsData>> _inFlight = {};
 
@@ -91,234 +86,49 @@ class LyricsService {
   }
 
   Future<LyricsData> _fetchInternal(Song song) async {
-    if (kIsWeb) {
-      final query = Uri(queryParameters: {
-        'title': song.title,
-        'artist': song.artist,
-        if ((song.album ?? '').isNotEmpty) 'album': song.album!,
-        if (song.durationSeconds != null) 'duration': song.durationSeconds.toString(),
-      }).query;
-      final response = await AuthService().get('/listening/lyrics/?$query');
-      final synced = response['syncedLyrics']?.toString() ?? '';
-      final plain = response['plainLyrics']?.toString() ?? '';
-      final text = synced.isNotEmpty ? synced : plain;
-      if (text.trim().isEmpty) {
-        throw StateError('Lyrics are not available for "${song.title}".');
-      }
-      return LyricsData(
-        text: text,
-        lines: synced.isNotEmpty ? parseLrc(synced) : _parseLines(plain),
-        isSynced: synced.isNotEmpty,
-        source: response['source']?.toString() ?? 'LRCLIB',
-        language: null,
-      );
-    }
-
     final cleanTitle = TrackNormalizer.normalizeTitle(song.title);
     final cleanArtist = TrackNormalizer.primaryArtist(song.artist);
 
-    // 1. Try JioSaavn official lyrics (Direct, ID lookup, or search)
+    // LRCLIB provides timed and plain lyrics without requiring the old Loopin
+    // backend or a JioSaavn-specific track identifier.
     try {
-      final jioData = await _fetchJioSaavn(song, cleanTitle, cleanArtist);
-      if (jioData != null && jioData.lines.isNotEmpty) {
-        _lyricsLog.success('Lyrics fetched from JioSaavn for: ${song.title} (${jioData.language ?? "native"})');
-        return jioData;
+      final exact = await _fetchLrclib(cleanTitle, cleanArtist, song.durationSeconds);
+      if (exact != null && exact.lines.isNotEmpty) {
+        _lyricsLog.success('Lyrics fetched from LRCLIB (synced=${exact.isSynced}) for: ${song.title}');
+        return exact;
       }
-    } catch (e) {
-      _lyricsLog.info('JioSaavn lyrics lookup failed: $e');
+    } catch (error) {
+      _lyricsLog.info('LRCLIB lookup failed: $error');
     }
 
-    // 2. Try LRCLIB API with exact track metadata (Open Database with Synced timestamps)
-    try {
-      final lrclibData = await _fetchLrclib(cleanTitle, cleanArtist, song.durationSeconds);
-      if (lrclibData != null && lrclibData.lines.isNotEmpty) {
-        _lyricsLog.success('Lyrics fetched from LRCLIB (synced=${lrclibData.isSynced}) for: ${song.title}');
-        return lrclibData;
-      }
-    } catch (e) {
-      _lyricsLog.info('LRCLIB lyrics lookup failed: $e');
-    }
-
-    // 3. Try LRCLIB search queries (full title/artist and cleaned title/artist)
-    for (final q in [
+    for (final query in [
       '${song.title} ${song.artist}',
       '$cleanTitle $cleanArtist',
       cleanTitle,
     ]) {
+      if (query.trim().isEmpty) continue;
       try {
-        final searchData = await _searchLrclib(q);
-        if (searchData != null && searchData.lines.isNotEmpty) {
-          _lyricsLog.success('Lyrics fetched from LRCLIB Search ("$q") for: ${song.title}');
-          return searchData;
+        final result = await _searchLrclib(query);
+        if (result != null && result.lines.isNotEmpty) {
+          _lyricsLog.success('Lyrics fetched from LRCLIB search for: ${song.title}');
+          return result;
         }
-      } catch (e) {
-        _lyricsLog.info('LRCLIB Search ("$q") lookup failed: $e');
+      } catch (error) {
+        _lyricsLog.info('LRCLIB search failed: $error');
       }
     }
 
-    // 4. Try Saavn Dev API fallback for Indian language regional tracks
     try {
-      final saavnDevData = await _fetchSaavnDev(song, cleanTitle, cleanArtist);
-      if (saavnDevData != null && saavnDevData.lines.isNotEmpty) {
-        _lyricsLog.success('Lyrics fetched from Saavn Dev for: ${song.title}');
-        return saavnDevData;
-      }
-    } catch (e) {
-      _lyricsLog.info('Saavn Dev lookup failed: $e');
-    }
-
-    // 5. Try lyrics.ovh fallback
-    try {
-      final ovhData = await _fetchLyricsOvh(cleanArtist, cleanTitle);
-      if (ovhData != null && ovhData.lines.isNotEmpty) {
+      final fallback = await _fetchLyricsOvh(cleanArtist, cleanTitle);
+      if (fallback != null && fallback.lines.isNotEmpty) {
         _lyricsLog.success('Lyrics fetched from Lyrics.ovh for: ${song.title}');
-        return ovhData;
+        return fallback;
       }
-    } catch (e) {
-      _lyricsLog.info('Lyrics.ovh lookup failed: $e');
+    } catch (error) {
+      _lyricsLog.info('Lyrics.ovh lookup failed: $error');
     }
 
     throw StateError('Lyrics are not available for "${song.title}".');
-  }
-
-  Future<LyricsData?> _fetchJioSaavn(Song song, String cleanTitle, String cleanArtist) async {
-    var lyricsId = song.lyricsId;
-    if (lyricsId == null || lyricsId.trim().isEmpty) {
-      lyricsId = await _api.fetchLyricsId(song.id);
-    }
-
-    // If lyricsId is still null, try finding the track on JioSaavn
-    if (lyricsId == null || lyricsId.trim().isEmpty) {
-      lyricsId = await _searchJioSaavnLyricsId('$cleanTitle $cleanArtist');
-    }
-
-    final targetId = (lyricsId != null && lyricsId.trim().isNotEmpty) ? lyricsId : song.id;
-    if (targetId.trim().isEmpty) return null;
-
-    final uri = Uri.parse(_jioSaavnBaseUrl).replace(queryParameters: {
-      '__call': 'lyrics.getLyrics',
-      'lyrics_id': targetId,
-      'ctx': 'web6dot0',
-      'api_version': '4',
-      '_format': 'json',
-      '_marker': '0',
-      'cc': 'in',
-    });
-
-    final response = await http
-        .get(uri, headers: const {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
-        .timeout(const Duration(seconds: 8));
-
-    if (response.statusCode != 200) return null;
-
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map) return null;
-
-    final root = Map<String, dynamic>.from(decoded);
-    final rawLyrics = root['lyrics'];
-    String text = '';
-    String? copyright;
-    String? language;
-
-    if (rawLyrics is String) {
-      text = rawLyrics;
-    } else if (rawLyrics is Map) {
-      final lyricsMap = Map<String, dynamic>.from(rawLyrics);
-      text = _firstText(lyricsMap, [
-        'lyrics', 'text', 'lyrics_text', 'lyrics_html', 'lyrics_body', 'snippet',
-      ]);
-      copyright = lyricsMap['copyright']?.toString();
-      language = lyricsMap['language']?.toString();
-    }
-
-    if (text.trim().isEmpty) {
-      text = _firstText(root, [
-        'lyrics_text', 'lyrics_html', 'lyrics_body', 'text', 'lyrics_snippet',
-      ]);
-      copyright ??= root['copyright']?.toString();
-      language ??= root['language']?.toString();
-    }
-
-    if (text.trim().isEmpty && root['data'] is Map) {
-      final dataMap = Map<String, dynamic>.from(root['data'] as Map);
-      text = _firstText(dataMap, [
-        'lyrics', 'lyrics_text', 'lyrics_html', 'text',
-      ]);
-      copyright ??= dataMap['copyright']?.toString();
-      language ??= dataMap['language']?.toString();
-    }
-
-    text = _clean(text);
-    if (text.isEmpty) return null;
-
-    final lines = _parseLines(text);
-    if (lines.isEmpty) return null;
-
-    return LyricsData(
-      text: text,
-      lines: lines,
-      isSynced: false,
-      copyright: copyright != null && copyright.trim().isNotEmpty ? _clean(copyright) : null,
-      source: 'JioSaavn',
-      language: language,
-    );
-  }
-
-  Future<String?> _searchJioSaavnLyricsId(String query) async {
-    try {
-      final uri = Uri.parse(_jioSaavnBaseUrl).replace(queryParameters: {
-        '__call': 'autocomplete.get',
-        'query': query,
-        '_format': 'json',
-        '_marker': '0',
-        'ctx': 'web6dot0',
-        'api_version': '4',
-      });
-      final res = await http.get(uri, headers: const {'User-Agent': 'Mozilla/5.0'}).timeout(const Duration(seconds: 5));
-      if (res.statusCode != 200) return null;
-      final decoded = jsonDecode(res.body);
-      if (decoded is! Map) return null;
-      final songs = decoded['songs'] is Map ? (decoded['songs']['data'] as List?) : null;
-      if (songs == null || songs.isEmpty) return null;
-      for (final item in songs) {
-        if (item is Map) {
-          final more = item['more_info'] is Map ? Map<String, dynamic>.from(item['more_info'] as Map) : null;
-          final lid = item['lyrics_id']?.toString() ?? more?['lyrics_id']?.toString();
-          if (lid != null && lid.isNotEmpty && lid != 'null') return lid;
-          final hasLyrics = item['has_lyrics']?.toString() ?? more?['has_lyrics']?.toString();
-          if (hasLyrics == 'true') {
-            final id = item['id']?.toString();
-            if (id != null && id.isNotEmpty) return id;
-          }
-        }
-      }
-    } catch (_) {}
-    return null;
-  }
-
-  Future<LyricsData?> _fetchSaavnDev(Song song, String cleanTitle, String cleanArtist) async {
-    try {
-      final uri = Uri.parse('https://saavn.dev/api/songs/${song.id}/lyrics');
-      final res = await http.get(uri).timeout(const Duration(seconds: 5));
-      if (res.statusCode == 200) {
-        final decoded = jsonDecode(res.body);
-        if (decoded is Map && decoded['data'] is Map) {
-          final data = Map<String, dynamic>.from(decoded['data'] as Map);
-          final rawLyrics = data['lyrics']?.toString() ?? '';
-          final text = _clean(rawLyrics);
-          if (text.isNotEmpty) {
-            return LyricsData(
-              text: text,
-              lines: _parseLines(text),
-              isSynced: false,
-              copyright: data['copyright']?.toString(),
-              source: 'JioSaavn',
-            );
-          }
-        }
-      }
-    } catch (_) {}
-    return null;
   }
 
   Future<LyricsData?> _fetchLrclib(String title, String artist, int? durationSeconds) async {
