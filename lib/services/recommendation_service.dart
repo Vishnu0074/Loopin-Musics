@@ -151,15 +151,17 @@ class RecommendationService {
       if (queries.length >= 10) break;
     }
 
-    final fetched = <Song>[];
-    for (final query in queries) {
-      try {
-        fetched.addAll(await _api.search(query, pages: 1, limit: 30));
-      } catch (error) {
-        _recommendationLog.warning('Recommendation discovery failed for "$query": $error');
-      }
-    }
-    fetched.addAll(candidates);
+    final batches = await Future.wait(
+      queries.take(6).map((query) async {
+        try {
+          return await _api.search(query, pages: 1, limit: 30);
+        } catch (error) {
+          _recommendationLog.warning('Recommendation discovery failed for "$query": $error');
+          return <Song>[];
+        }
+      }),
+    );
+    final fetched = <Song>[...batches.expand((batch) => batch), ...candidates];
 
     final unique = <String, Song>{};
     for (final candidate in fetched) {
