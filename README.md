@@ -25,7 +25,7 @@ flutter run \
   --dart-define=MONOCHROME_TRACKS_APIS=https://fallback-one.example,https://fallback-two.example
 ```
 
-Every configured host must implement the Tracks Streamer `/search/tracks` and `/track/{trackId}` routes.
+Every configured host must implement the Tracks Streamer `/search/tracks` and `/track/{trackId}` routes. **Important:** Monochrome documents that its hosted music API only accepts official Monochrome instances. The default host may therefore reject Loopin V2; use a host that has explicitly authorized this app or your own compatible service.
 
 To enable optional account endpoints, supply your own compatible Loopin backend at launch:
 
