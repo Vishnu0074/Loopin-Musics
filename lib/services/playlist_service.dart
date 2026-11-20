@@ -148,7 +148,7 @@ class PlaylistService {
 
   Future<Map<String, dynamic>> historyPage({int page = 1, int pageSize = 20}) async {
     final songs = await RecommendationService().loadHistory(limit: 1000);
-    final start = ((page - 1) * pageSize).clamp(0, songs.length);
+    final start = ((page - 1) * pageSize).clamp(0, songs.length).toInt();
     final items = songs.skip(start).take(pageSize).map((song) => {
       'song_id': song.id,
       'title': song.title,
