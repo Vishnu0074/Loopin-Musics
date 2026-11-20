@@ -1,37 +1,154 @@
+import 'dart:convert';
+
 import '../models/song.dart';
 import '../models/playlist.dart';
-import 'auth_service.dart';
+import 'app_storage.dart';
+import 'recommendation_service.dart';
 import 'stats_service.dart';
 
+/// Local-first playlist and library storage. Playlists, likes and history work
+/// without a Loopin Django server; public visibility is local to this device.
 class PlaylistService {
-  final AuthService _api=AuthService();
-  Future<List<Playlist>> list() async { final d=await _api.get('/playlists/'); final own=(d['playlists'] as List? ?? const []).whereType<Map>().map((x)=>Playlist.fromJson(Map<String,dynamic>.from(x))); final pub=(d['public_playlists'] as List? ?? const []).whereType<Map>().map((x)=>Playlist.fromJson(Map<String,dynamic>.from(x))); return [...own,...pub]; }
-  Future<List<Playlist>> publicList() async { final d=await _api.get('/playlists/'); return (d['public_playlists'] as List? ?? const []).whereType<Map>().map((x)=>Playlist.fromJson(Map<String,dynamic>.from(x))).toList(); }
-  Future<Playlist> create(String name, {bool isPublic=false}) async { final d=await _api.post('/playlists/',{'name':name,'is_public':isPublic}); return Playlist.fromJson(d); }
-  Future<Map<String,dynamic>> detail(int id) => _api.get('/playlists/$id/');
-  Future<void> addSong(int id,Song s) async { await _api.post('/playlists/$id/songs/',{'song_id':s.id,'title':s.title,'artist':s.artist,'album':s.album??'','image_url':s.imageUrl}); }
-  Future<void> removeSong(int id,String songId) async { await _api.delete('/playlists/$id/songs/?song_id=${Uri.encodeComponent(songId)}'); }
-  Future<void> reorder(int id,List<String> ids) async { await _api.patch('/playlists/$id/reorder/',{'song_ids':ids}); }
-  Future<Map<String,dynamic>> sources() => _api.get('/playlists/sources/');
-  Future<List<Song>> likedSongs() async {
-    final data=await _api.get('/listening/likes/');
-    return (data['likes'] as List? ?? const []).whereType<Map>().map((row)=>Song(
-      id:row['song_id']?.toString()??'',
-      title:row['title']?.toString()??'',
-      artist:row['artist']?.toString()??'Unknown Artist',
-      album:row['album']?.toString(),
-      imageUrl:row['image_url']?.toString()??'',
-      mediaUrl:'',
-    )).where((song)=>song.id.isNotEmpty).toList();
+  final AppStorage _storage = AppStorage();
+  static const _key = 'loopin_v2_playlists';
+
+  Future<List<Map<String, dynamic>>> _rows() async {
+    final raw = await _storage.read(key: _key);
+    if (raw == null) return [];
+    try {
+      final decoded = jsonDecode(raw);
+      return decoded is List
+          ? decoded.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
+          : [];
+    } catch (_) {
+      return [];
+    }
   }
-  Future<Map<String,dynamic>> historyPage({int page=1,int pageSize=20}) =>
-      _api.get('/listening/history/?page=$page&page_size=$pageSize');
-  Future<bool> toggleLike(Song song) async {
-    final result=await _api.post('/listening/likes/',{
-      'song_id':song.id,'title':song.title,'artist':song.artist,
-      'album':song.album??'','image_url':song.imageUrl,
-    });
-    return result['liked']==true;
+
+  Future<void> _save(List<Map<String, dynamic>> rows) =>
+      _storage.write(key: _key, value: jsonEncode(rows));
+
+  Playlist _model(Map<String, dynamic> row) {
+    final songs = row['songs'] is List ? row['songs'] as List : const [];
+    return Playlist(
+      id: (row['id'] as num?)?.toInt() ?? 0,
+      name: row['name']?.toString() ?? 'Playlist',
+      imageUrl: row['image_url']?.toString(),
+      songCount: songs.length,
+      owner: 'You',
+      isPublic: row['is_public'] == true,
+    );
   }
-  Future<Map<String,dynamic>> stats() => StatsService().getCombinedStats();
+
+  Future<List<Playlist>> list() async => (await _rows()).map(_model).toList();
+
+  Future<List<Playlist>> publicList() async =>
+      (await _rows()).where((row) => row['is_public'] == true).map(_model).toList();
+
+  Future<Playlist> create(String name, {bool isPublic = false}) async {
+    final rows = await _rows();
+    final id = DateTime.now().microsecondsSinceEpoch;
+    final row = <String, dynamic>{
+      'id': id,
+      'name': name.trim().isEmpty ? 'New Playlist' : name.trim(),
+      'is_public': isPublic,
+      'songs': <Map<String, dynamic>>[],
+      'created_at': DateTime.now().toIso8601String(),
+    };
+    rows.insert(0, row);
+    await _save(rows);
+    return _model(row);
+  }
+
+  Future<Map<String, dynamic>> detail(int id) async {
+    final rows = await _rows();
+    final row = rows.firstWhere((item) => (item['id'] as num?)?.toInt() == id,
+        orElse: () => throw StateError('Playlist not found.'));
+    return {
+      ...row,
+      'songs': (row['songs'] as List? ?? const []).map((item) {
+        final data = Map<String, dynamic>.from(item as Map);
+        data['song_id'] = data['id'];
+        data['position'] = data['position'] ?? 0;
+        return data;
+      }).toList(),
+    };
+  }
+
+  Future<void> addSong(int id, Song song) async {
+    final rows = await _rows();
+    final row = rows.firstWhere((item) => (item['id'] as num?)?.toInt() == id,
+        orElse: () => throw StateError('Playlist not found.'));
+    final songs = (row['songs'] as List? ?? const [])
+        .map((item) => Map<String, dynamic>.from(item as Map)).toList();
+    if (songs.any((item) => item['id']?.toString() == song.id)) return;
+    songs.add({...song.toJson(), 'position': songs.length});
+    row['songs'] = songs;
+    await _save(rows);
+  }
+
+  Future<void> removeSong(int id, String songId) async {
+    final rows = await _rows();
+    final row = rows.firstWhere((item) => (item['id'] as num?)?.toInt() == id,
+        orElse: () => throw StateError('Playlist not found.'));
+    final songs = (row['songs'] as List? ?? const [])
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .where((item) => item['id']?.toString() != songId)
+        .toList();
+    for (var i = 0; i < songs.length; i++) {
+      songs[i]['position'] = i;
+    }
+    row['songs'] = songs;
+    await _save(rows);
+  }
+
+  Future<void> reorder(int id, List<String> ids) async {
+    final rows = await _rows();
+    final row = rows.firstWhere((item) => (item['id'] as num?)?.toInt() == id,
+        orElse: () => throw StateError('Playlist not found.'));
+    final current = (row['songs'] as List? ?? const [])
+        .map((item) => Map<String, dynamic>.from(item as Map)).toList();
+    final byId = {for (final item in current) item['id']?.toString() ?? '': item};
+    final reordered = <Map<String, dynamic>>[];
+    for (final songId in ids) {
+      final item = byId.remove(songId);
+      if (item != null) reordered.add(item);
+    }
+    reordered.addAll(byId.values);
+    for (var i = 0; i < reordered.length; i++) {
+      reordered[i]['position'] = i;
+    }
+    row['songs'] = reordered;
+    await _save(rows);
+  }
+
+  Future<Map<String, dynamic>> sources() async => {
+    'sources': ['Monochrome Tracks Streamer'],
+    'import_supported': false,
+  };
+
+  Future<List<Song>> likedSongs() => RecommendationService().loadLikedSongs();
+
+  Future<Map<String, dynamic>> historyPage({int page = 1, int pageSize = 20}) async {
+    final songs = await RecommendationService().loadHistory(limit: 1000);
+    final start = ((page - 1) * pageSize).clamp(0, songs.length);
+    final items = songs.skip(start).take(pageSize).map((song) => {
+      'song_id': song.id,
+      'title': song.title,
+      'artist': song.artist,
+      'album': song.album ?? '',
+      'image_url': song.imageUrl,
+      'played_at': null,
+    }).toList();
+    return {
+      'count': songs.length,
+      'results': items,
+      'next': start + pageSize < songs.length ? page + 1 : null,
+      'previous': page > 1 ? page - 1 : null,
+    };
+  }
+
+  Future<bool> toggleLike(Song song) => RecommendationService().toggleLike(song);
+
+  Future<Map<String, dynamic>> stats() => StatsService().getCombinedStats();
 }
