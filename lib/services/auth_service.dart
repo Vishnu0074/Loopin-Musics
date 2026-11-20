@@ -16,6 +16,11 @@ class AuthService {
   Map<String,dynamic> _decode(http.Response r){if(r.body.isEmpty)return {}; final d=jsonDecode(r.body);return d is Map<String,dynamic>?d:Map<String,dynamic>.from(d as Map);}
 
   Future<Map<String,dynamic>> _request(String method,String path,{Map<String,dynamic>? body,bool authenticated=true,bool retry=true}) async {\n    if (baseUrl.isEmpty) {\n      throw const AuthException('Account features need a configured backend. Set LOOPIN_API_URL when launching Loopin V2.');\n    }
+    if (baseUrl.isEmpty) {
+      throw const AuthException(
+        'Account features need a configured backend. Set LOOPIN_API_URL when launching Loopin V2.',
+      );
+    }
     var token=await accessToken();
     final headers=<String,String>{'Content-Type':'application/json'};
     if(authenticated&&token!=null)headers['Authorization']='Bearer $token';
