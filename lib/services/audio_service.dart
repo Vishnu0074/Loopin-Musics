@@ -433,7 +433,7 @@ class GlobalAudioService with WidgetsBindingObserver {
       _audioSettings = _audioSettings.copyWith(quality: 'auto');
     }
     final quality = highQualityEnabled ? _audioSettings.quality : 'auto';
-    final directMediaUrl = await MonochromeApi().resolveStream(song, quality: quality);
+    final directMediaUrl = await _monochrome.resolveStream(song, quality: quality);
     if (!_realtime.isPlaybackOwner || selectionGeneration != _playSelectionGeneration) return;
     if (directMediaUrl == null) {
       throw StateError('No playable stream was found for "${song.title}".');
