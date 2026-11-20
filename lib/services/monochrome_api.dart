@@ -134,7 +134,7 @@ class MonochromeApi {
       try {
         final response = await _client
             .get(uri, headers: const {'Accept': 'application/json'})
-            .timeout(const Duration(seconds: 18));
+            .timeout(const Duration(seconds: 8));
         if ((response.statusCode == 502 ||
                 response.statusCode == 503 ||
                 response.statusCode == 504) &&
