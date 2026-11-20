@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'app_storage.dart';
 
 import '../models/song.dart';
-import 'auth_service.dart';
 
 class StatsService {
   static final StatsService _instance = StatsService._internal();
@@ -11,8 +10,6 @@ class StatsService {
   StatsService._internal();
 
   final _storage = AppStorage();
-  final _api = AuthService();
-  static const _statsKey = 'loopin_cached_listening_stats';
   static const _localTrackingKey = 'loopin_local_listening_tracking';
 
   int _sessionAccumulatedMilliseconds = 0;
@@ -142,22 +139,7 @@ class StatsService {
   }
 
   Future<Map<String, dynamic>> getCombinedStats() async {
-    var remote = <String, dynamic>{};
-    try {
-      remote = await _api.get('/listening/stats/');
-      if (remote.isNotEmpty) {
-        await _storage.write(key: _statsKey, value: jsonEncode(remote));
-      }
-    } catch (_) {
-      // Use the last successful server snapshot if the backend is temporarily
-      // unreachable; never fabricate a one-day streak for a new listener.
-      try {
-        final cached = await _storage.read(key: _statsKey);
-        if (cached != null) {
-          remote = Map<String, dynamic>.from(jsonDecode(cached) as Map);
-        }
-      } catch (_) {}
-    }
+    final remote = <String, dynamic>{};
 
     var local = <String, dynamic>{};
     try {
