@@ -15,31 +15,44 @@ class AuthService {
   String? _firstError(Map<String,dynamic> data){for(final v in data.values){if(v is List&&v.isNotEmpty)return v.first.toString();if(v is Map&&v.isNotEmpty)return _firstError(v.cast<String,dynamic>());if(v is String)return v;}return null;}
   Map<String,dynamic> _decode(http.Response r){if(r.body.isEmpty)return {}; final d=jsonDecode(r.body);return d is Map<String,dynamic>?d:Map<String,dynamic>.from(d as Map);}
 
-  Future<Map<String,dynamic>> _request(String method,String path,{
+  Future<Map<String,dynamic>> _request(
+    String method,
+    String path, {
+    Map<String, dynamic>? body,
+    bool authenticated = true,
+    bool retry = true,
+  }) async {
     if (baseUrl.isEmpty) {
       throw const AuthException(
         'Account features need a configured backend. Set LOOPIN_API_URL when launching Loopin V2.',
       );
     }
-    var token=await accessToken();
-    final headers=<String,String>{'Content-Type':'application/json'};
-    if(authenticated&&token!=null)headers['Authorization']='Bearer $token';
-    final uri=Uri.parse('$baseUrl$path');
-    http.Response r;
-    try {
-      if(method=='GET') {
-        r=await http.get(uri,headers:headers).timeout(const Duration(seconds:20));
-      } else if(method=='DELETE') {
-        r=await http.delete(uri,headers:headers).timeout(const Duration(seconds:20));
-      } else if(method=='PATCH') {
-        r=await http.patch(uri,headers:headers,body:jsonEncode(body??{})).timeout(const Duration(seconds:20));
-      } else {
-        r=await http.post(uri,headers:headers,body:jsonEncode(body??{})).timeout(const Duration(seconds:20));
-      }
-    } on Exception catch (_) {
-      throw AuthException('Unable to reach Loopin right now. Please check your connection and try again.');
+
+    final token = await accessToken();
+    final headers = <String, String>{'Content-Type': 'application/json'};
+    if (authenticated && token != null) {
+      headers['Authorization'] = 'Bearer $token';
     }
-    if (r.statusCode == 401 && authenticated) {
+
+    final uri = Uri.parse('$baseUrl$path');
+    http.Response response;
+    try {
+      if (method == 'GET') {
+        response = await http.get(uri, headers: headers).timeout(const Duration(seconds: 20));
+      } else if (method == 'DELETE') {
+        response = await http.delete(uri, headers: headers).timeout(const Duration(seconds: 20));
+      } else if (method == 'PATCH') {
+        response = await http.patch(uri, headers: headers, body: jsonEncode(body ?? {})).timeout(const Duration(seconds: 20));
+      } else {
+        response = await http.post(uri, headers: headers, body: jsonEncode(body ?? {})).timeout(const Duration(seconds: 20));
+      }
+    } on Exception {
+      throw const AuthException(
+        'Unable to reach the account server. Check your connection and backend configuration.',
+      );
+    }
+
+    if (response.statusCode == 401 && authenticated) {
       if (retry) {
         final refreshed = await refreshAccessToken();
         if (refreshed) {
@@ -48,8 +61,16 @@ class AuthService {
       }
       await _expireSession();
     }
-    final data=_decode(r);
-    if(r.statusCode<200||r.statusCode>=300)throw AuthException(data['detail']?.toString()??_firstError(data)??'Request failed (undefined).', statusCode: r.statusCode);
+
+    final data = _decode(response);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw AuthException(
+        data['detail']?.toString() ??
+            _firstError(data) ??
+            'Request failed (HTTP ${response.statusCode}).',
+        statusCode: response.statusCode,
+      );
+    }
     return data;
   }
 
