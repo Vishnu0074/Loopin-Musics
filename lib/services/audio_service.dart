@@ -16,7 +16,6 @@ import 'audio_effects_service.dart';
 import 'service_config_service.dart';
 import 'track_normalizer.dart';
 import 'stats_service.dart';
-import 'auth_service.dart';
 import 'realtime_player_service.dart';
 import 'media_session_service_stub.dart'
     if (dart.library.js_interop) 'media_session_service_web.dart';
