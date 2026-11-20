@@ -232,11 +232,59 @@ class MonochromeApi {
     final candidateIsrc = (candidate.isrc ?? '').trim().toLowerCase();
     if (targetIsrc.isNotEmpty && targetIsrc == candidateIsrc) return 200;
 
-    String clean(String value) => value
-        .toLowerCase()
-        .replaceAll(RegExp(r'\b(feat|featuring|ft)\.?\s+.*$'), '')
-        .replaceAll(RegExp(r'[\(\[\{].*?[\)\]\}]'), '')
-        .replaceAll(RegExp(r'[^a-z0-9]'), '');
+    String clean(String value) {
+      final lower = value.toLowerCase()
+          .replaceAll(RegExp(r'\\b(feat|featuring|ft)\\.?\\s+.*
+
+    final targetTitle = clean(target.title);
+    final candidateTitle = clean(candidate.title);
+    var score = 0;
+    if (targetTitle == candidateTitle && targetTitle.isNotEmpty) {
+      score += 100;
+    } else if (targetTitle.isNotEmpty &&
+        (targetTitle.contains(candidateTitle) || candidateTitle.contains(targetTitle))) {
+      score += 65;
+    }
+
+    final targetArtists = clean(target.artist);
+    final candidateArtists = clean(candidate.artist);
+    if (targetArtists.isNotEmpty &&
+        (candidateArtists.contains(targetArtists) || targetArtists.contains(candidateArtists))) {
+      score += 50;
+    }
+    final targetDuration = target.durationSeconds ?? 0;
+    final candidateDuration = candidate.durationSeconds ?? 0;
+    if (targetDuration > 0 && candidateDuration > 0) {
+      final difference = (targetDuration - candidateDuration).abs();
+      if (difference <= 3) {
+        score += 25;
+      } else if (difference <= 7) {
+        score += 10;
+      }
+    }
+    return score;
+  }
+
+  Future<String?> fetchLyricsId(String songId) async => null;
+
+  void clearCache() {
+    _searchCache.clear();
+    _streamCache.clear();
+    _nativeTrackIds.clear();
+    _inFlight.clear();
+  }
+
+  void dispose() => _client.close();
+}
+), '')
+          .replaceAll(RegExp(r'[\\(\\[\\{].*?[\\)\\]\\}]'), '');
+      final latin = lower.replaceAll(RegExp(r'[^a-z0-9]'), '');
+      // Keep non-Latin scripts intact (e.g. Malayalam, Tamil, Arabic) rather
+      // than reducing a valid title or artist to an empty match key.
+      return latin.isNotEmpty
+          ? latin
+          : lower.replaceAll(RegExp(r'[\\s.,!?;:(){}\\[\\]\\-_/]+'), '');
+    }
 
     final targetTitle = clean(target.title);
     final candidateTitle = clean(candidate.title);
