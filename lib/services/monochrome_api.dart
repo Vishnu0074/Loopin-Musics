@@ -32,7 +32,7 @@ class MonochromeApi {
   }) async {
     final clean = query.trim();
     if (clean.isEmpty) return const [];
-    final requested = (pages * limit).clamp(1, 100);
+    final requested = (pages * limit).clamp(1, 100).toInt();
     return searchPage(clean, page: 1, limit: requested);
   }
 
@@ -46,9 +46,9 @@ class MonochromeApi {
   }) async {
     final clean = query.trim();
     if (clean.isEmpty) return const [];
-    final safePage = page.clamp(1, 100);
-    final safeLimit = limit.clamp(1, 50);
-    final totalLimit = (safePage * safeLimit).clamp(1, 100);
+    final safePage = page.clamp(1, 100).toInt();
+    final safeLimit = limit.clamp(1, 100).toInt();
+    final totalLimit = (safePage * safeLimit).clamp(1, 100).toInt();
     final all = await _searchTracks(clean, totalLimit);
     final start = (safePage - 1) * safeLimit;
     if (start >= all.length) return const [];
@@ -64,7 +64,7 @@ class MonochromeApi {
 
     final request = _fetchTracks(query, limit);
     _inFlight[key] = request;
-    return request.whenComplete(() => _inFlight.remove(key));
+    return request.whenComplete(() { _inFlight.remove(key); });
   }
 
   Future<List<Song>> _fetchTracks(String query, int limit) async {
