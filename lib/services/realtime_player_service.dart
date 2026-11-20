@@ -22,7 +22,7 @@ class RealtimePlayerService {
 
   static const _socketBase = String.fromEnvironment(
     'LOOPIN_WS_URL',
-    defaultValue: 'wss://loopin-api-xuaf.onrender.com/ws/player/',
+    defaultValue: '',
   );
 
   WebSocketChannel? _channel;
@@ -135,7 +135,7 @@ class RealtimePlayerService {
 
   Future<void> _connectInternal() async {
     await _ensureModeLoaded();
-    if (_disposed || _standaloneMode) return;
+    if (_disposed || _standaloneMode || _socketBase.isEmpty) return;
     try {
       // Refresh before establishing a background/reconnect socket so a long-lived
       // playback session does not reconnect with an expired access token.
@@ -301,7 +301,7 @@ class RealtimePlayerService {
   /// server for its authoritative state instead of trusting stale local state.
   Future<void> resume() async {
     await _ensureModeLoaded();
-    if (_disposed || _standaloneMode) return;
+    if (_disposed || _standaloneMode || _socketBase.isEmpty) return;
     final auth = AuthService();
     await auth.refreshAccessToken();
     if (_channel == null) {
