@@ -64,12 +64,15 @@ class PlaylistService {
     final rows = await _rows();
     final row = rows.firstWhere((item) => (item['id'] as num?)?.toInt() == id,
         orElse: () => throw StateError('Playlist not found.'));
+    final rawSongs = (row['songs'] as List? ?? const []);
     return {
       ...row,
-      'songs': (row['songs'] as List? ?? const []).map((item) {
-        final data = Map<String, dynamic>.from(item as Map);
+      'can_edit': true,
+      'songs': rawSongs.asMap().entries.map((entry) {
+        final data = Map<String, dynamic>.from(entry.value as Map);
         data['song_id'] = data['id'];
-        data['position'] = data['position'] ?? 0;
+        data['id'] = entry.key + 1;
+        data['position'] = entry.key;
         return data;
       }).toList(),
     };
@@ -122,10 +125,24 @@ class PlaylistService {
     await _save(rows);
   }
 
-  Future<Map<String, dynamic>> sources() async => {
-    'sources': ['Monochrome Tracks Streamer'],
-    'import_supported': false,
-  };
+  Future<Map<String, dynamic>> sources() async {
+    final liked = await RecommendationService().loadLikedSongs();
+    final recent = await RecommendationService().loadHistory(limit: 100);
+    Map<String, dynamic> row(Song song) => {
+      'song_id': song.id,
+      'title': song.title,
+      'artist': song.artist,
+      'album': song.album ?? '',
+      'image_url': song.imageUrl,
+    };
+    return {
+      'liked': liked.map(row).toList(),
+      'recent': recent.map(row).toList(),
+      'search': <Map<String, dynamic>>[],
+      'sources': ['Monochrome Tracks Streamer'],
+      'import_supported': false,
+    };
+  }
 
   Future<List<Song>> likedSongs() => RecommendationService().loadLikedSongs();
 
@@ -142,6 +159,8 @@ class PlaylistService {
     }).toList();
     return {
       'count': songs.length,
+      'items': items,
+      'has_next': start + pageSize < songs.length,
       'results': items,
       'next': start + pageSize < songs.length ? page + 1 : null,
       'previous': page > 1 ? page - 1 : null,
