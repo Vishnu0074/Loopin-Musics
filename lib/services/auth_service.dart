@@ -15,7 +15,7 @@ class AuthService {
   String? _firstError(Map<String,dynamic> data){for(final v in data.values){if(v is List&&v.isNotEmpty)return v.first.toString();if(v is Map&&v.isNotEmpty)return _firstError(v.cast<String,dynamic>());if(v is String)return v;}return null;}
   Map<String,dynamic> _decode(http.Response r){if(r.body.isEmpty)return {}; final d=jsonDecode(r.body);return d is Map<String,dynamic>?d:Map<String,dynamic>.from(d as Map);}
 
-  Future<Map<String,dynamic>> _request(String method,String path,{Map<String,dynamic>? body,bool authenticated=true,bool retry=true}) async {\n    if (baseUrl.isEmpty) {\n      throw const AuthException('Account features need a configured backend. Set LOOPIN_API_URL when launching Loopin V2.');\n    }
+  Future<Map<String,dynamic>> _request(String method,String path,{
     if (baseUrl.isEmpty) {
       throw const AuthException(
         'Account features need a configured backend. Set LOOPIN_API_URL when launching Loopin V2.',
