@@ -234,7 +234,14 @@ class MonochromeApi {
 
     String clean(String value) {
       final lower = value.toLowerCase()
-          .replaceAll(RegExp(r'\\b(feat|featuring|ft)\\.?\\s+.*
+          .replaceAll(RegExp(r'\b(feat|featuring|ft)\.?\s+.*$'), '')
+          .replaceAll(RegExp(r'[\(\[\{].*?[\)\]\}]'), '');
+      final latin = lower.replaceAll(RegExp(r'[^a-z0-9]'), '');
+      // Keep non-Latin scripts intact (Malayalam, Tamil, Arabic, etc.).
+      return latin.isNotEmpty
+          ? latin
+          : lower.replaceAll(RegExp(r'[\s.,!?;:(){}\[\]/_-]+'), '');
+    }
 
     final targetTitle = clean(target.title);
     final candidateTitle = clean(candidate.title);
@@ -242,6 +249,7 @@ class MonochromeApi {
     if (targetTitle == candidateTitle && targetTitle.isNotEmpty) {
       score += 100;
     } else if (targetTitle.isNotEmpty &&
+        candidateTitle.isNotEmpty &&
         (targetTitle.contains(candidateTitle) || candidateTitle.contains(targetTitle))) {
       score += 65;
     }
@@ -249,9 +257,11 @@ class MonochromeApi {
     final targetArtists = clean(target.artist);
     final candidateArtists = clean(candidate.artist);
     if (targetArtists.isNotEmpty &&
+        candidateArtists.isNotEmpty &&
         (candidateArtists.contains(targetArtists) || targetArtists.contains(candidateArtists))) {
       score += 50;
     }
+
     final targetDuration = target.durationSeconds ?? 0;
     final candidateDuration = candidate.durationSeconds ?? 0;
     if (targetDuration > 0 && candidateDuration > 0) {
