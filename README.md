@@ -19,7 +19,7 @@ flutter run --dart-define=MONOCHROME_TRACKS_API=https://tracks.monochrome.st
 To enable optional account endpoints, supply your own compatible Loopin backend at launch:
 
 ```bash
-flutter run --dart-define=LOOPIN_API_URL=https://your-backend.example/api
+flutter run \\\n  --dart-define=LOOPIN_API_URL=https://your-backend.example/api \\\n  --dart-define=LOOPIN_WS_URL=wss://your-backend.example/ws/player/
 ```
 
 ## Project notes
