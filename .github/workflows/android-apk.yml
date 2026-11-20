@@ -56,7 +56,7 @@ jobs:
           cache: true
 
       - name: Accept Android SDK licenses
-        run: yes | flutter doctor --android-licenses
+        run: yes | sdkmanager --licenses >/dev/null || true
 
       - name: Show build tool versions
         run: |
