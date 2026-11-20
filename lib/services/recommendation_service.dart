@@ -1,40 +1,127 @@
+import 'dart:convert';
+
 import '../models/song.dart';
+import 'app_storage.dart';
 import 'debug_log_service.dart';
-import 'auth_service.dart';
-import 'service_config_service.dart';
+import 'monochrome_api.dart';
+import 'track_normalizer.dart';
 
 final _recommendationLog = LoopinDebugLogService.instance;
 
+/// On-device recommendation engine inspired by Monochrome's smart seed and
+/// listening-signal model. No Loopin/Django endpoint is required.
 class RecommendationService {
   static final RecommendationService _instance = RecommendationService._internal();
-  final AuthService _backend = AuthService();
-  final ServiceConfigService _services = ServiceConfigService();
-  final Set<String> _likedIds = {};
-
   factory RecommendationService() => _instance;
   RecommendationService._internal();
 
+  final AppStorage _storage = AppStorage();
+  final MonochromeApi _api = MonochromeApi();
+  static const _historyKey = 'loopin_v2_listening_history';
+  static const _likesKey = 'loopin_v2_liked_songs';
+  static const _dislikesKey = 'loopin_v2_disliked_tracks';
+  static const _dislikedArtistsKey = 'loopin_v2_disliked_artists';
+  static const _signalsKey = 'loopin_v2_track_signals';
+  final Set<String> _likedIds = {};
+  final Set<String> _dislikedIds = {};
+  final Set<String> _dislikedArtists = {};
+  final Map<String, Map<String, dynamic>> _signals = {};
+  bool _loaded = false;
+
+  Future<void> _ensureLoaded() async {
+    if (_loaded) return;
+    try {
+      final likes = await _storage.read(key: _likesKey);
+      if (likes != null) {
+        final rows = jsonDecode(likes);
+        if (rows is List) {
+          for (final row in rows.whereType<Map>()) {
+            final song = Song.fromJson(Map<String, dynamic>.from(row));
+            if (song.id.isNotEmpty) _likedIds.add(song.id);
+          }
+        }
+      }
+      final dislikes = await _storage.read(key: _dislikesKey);
+      if (dislikes != null) {
+        final rows = jsonDecode(dislikes);
+        if (rows is List) _dislikedIds.addAll(rows.map((e) => e.toString()));
+      }
+      final artists = await _storage.read(key: _dislikedArtistsKey);
+      if (artists != null) {
+        final rows = jsonDecode(artists);
+        if (rows is List) _dislikedArtists.addAll(rows.map((e) => e.toString()));
+      }
+      final signals = await _storage.read(key: _signalsKey);
+      if (signals != null) {
+        final decoded = jsonDecode(signals);
+        if (decoded is Map) {
+          decoded.forEach((key, value) {
+            if (value is Map) _signals[key.toString()] = Map<String, dynamic>.from(value);
+          });
+        }
+      }
+    } catch (error) {
+      _recommendationLog.warning('Could not restore local music preferences: $error');
+    }
+    _loaded = true;
+  }
+
+  Future<void> _saveSignals() async {
+    await _storage.write(key: _signalsKey, value: jsonEncode(_signals));
+  }
+
+  Future<List<Map<String, dynamic>>> _history() async {
+    final raw = await _storage.read(key: _historyKey);
+    if (raw == null) return [];
+    try {
+      final decoded = jsonDecode(raw);
+      return decoded is List
+          ? decoded.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
+          : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
   void recordPlay(Song song) {
-    _sendEvent(song, 'play');
+    _recordSignal(song, 'play');
   }
 
   void recordCompletion(Song song) {
-    _sendEvent(song, 'complete');
+    _recordSignal(song, 'complete');
   }
 
   void recordSkip(Song song, {required Duration listened}) {
-    _sendEvent(song, 'skip', position: listened.inSeconds.toDouble());
+    _recordSignal(song, 'skip', position: listened.inSeconds);
   }
 
-  /// The backend now owns recommendation filtering. Flutter only reports which
-  /// songs are currently in the local playback queue and consumes the already
-  /// filtered queue returned by Django.
-  void recordQueueGenerated(Iterable<Song> songs) {
-    for (final song in songs) {
-      if (song.id.isEmpty) continue;
-      _sendEvent(song, 'queue_generate');
+  void recordQueueGenerated(Iterable<Song> songs) {}
+
+  Future<void> _recordSignal(Song song, String event, {int position = 0}) async {
+    await _ensureLoaded();
+    if (song.id.isEmpty) return;
+    final signal = _signals.putIfAbsent(song.id, () => {
+      'plays': 0, 'completions': 0, 'skips': 0, 'listened_seconds': 0,
+    });
+    if (event == 'play') signal['plays'] = (signal['plays'] as int) + 1;
+    if (event == 'complete') signal['completions'] = (signal['completions'] as int) + 1;
+    if (event == 'skip') {
+      signal['skips'] = (signal['skips'] as int) + 1;
+      signal['listened_seconds'] = (signal['listened_seconds'] as int) + position;
     }
-    _recommendationLog.info('Recorded generated queue songs for backend filtering');
+    signal['last_event'] = event;
+    signal['updated_at'] = DateTime.now().millisecondsSinceEpoch;
+    await _saveSignals();
+
+    if (event == 'play') {
+      final history = await _history();
+      history.insert(0, {
+        ...song.toJson(),
+        'played_at': DateTime.now().millisecondsSinceEpoch,
+      });
+      if (history.length > 500) history.removeRange(500, history.length);
+      await _storage.write(key: _historyKey, value: jsonEncode(history));
+    }
   }
 
   Future<List<Song>> buildRecommendations(
@@ -43,93 +130,83 @@ class RecommendationService {
     Iterable<Song> currentQueue = const [],
     Iterable<Song> candidates = const [],
   }) async {
-    if (!await _services.enabled('recommendations')) return const [];
-
-    final queue = <Song>[];
-    final seenIds = <String>{};
-
-    for (final song in currentQueue) {
-      if (song.id.isEmpty || seenIds.contains(song.id)) continue;
-      seenIds.add(song.id);
-      queue.add(song);
+    await _ensureLoaded();
+    final excluded = <String>{current.id, ...currentQueue.map((s) => s.id)};
+    final history = await _history();
+    for (final row in history.take(35)) {
+      final id = row['id']?.toString() ?? '';
+      if (id.isNotEmpty) excluded.add(id);
     }
 
-    // Keep the request bounded during long listening sessions. Django also
-    // blocks recently generated songs from listening history, so the complete
-    // lifetime queue does not need to be sent on every refill request.
-    if (queue.length > 120) {
-      queue.removeRange(0, queue.length - 120);
+    final queries = <String>{
+      current.artist.trim(),
+      if ((current.genre ?? '').trim().isNotEmpty) current.genre!.trim(),
+      if ((current.language ?? '').trim().isNotEmpty) current.language!.trim(),
+      current.title.trim(),
+    }.where((q) => q.length >= 2).take(4).toList();
+
+    final fetched = <Song>[];
+    for (final query in queries) {
+      try {
+        fetched.addAll(await _api.search(query, pages: 1, limit: 30));
+      } catch (error) {
+        _recommendationLog.warning('Recommendation discovery failed for "$query": $error');
+      }
+    }
+    fetched.addAll(candidates);
+
+    final unique = <String, Song>{};
+    for (final candidate in fetched) {
+      if (candidate.id.isEmpty || excluded.contains(candidate.id)) continue;
+      if (_dislikedIds.contains(candidate.id)) continue;
+      final artistKey = candidate.artist.toLowerCase().trim();
+      if (_dislikedArtists.contains(artistKey)) continue;
+      unique.putIfAbsent(candidate.id, () => candidate);
     }
 
-    final payload = {
-      'current': _songPayload(current),
-      'queue': queue.map(_songPayload).toList(),
-      'candidates': candidates.map(_songPayload).toList(),
-      'limit': limit.clamp(1, 50).toInt(),
-    };
+    final ranked = unique.values.map((song) => (
+      song: song,
+      score: _score(song, current),
+    )).toList()
+      ..sort((a, b) => b.score.compareTo(a.score));
 
-    Map<String, dynamic> response;
-    try {
-      response = await _backend.post('/recommendations/next/', payload);
-    } on AuthException catch (error) {
-      // A stale/expired access token must not leave guest playback with an
-      // empty queue. Retry this public endpoint without credentials; valid
-      // tokens still use the personalized authenticated response above.
-      if (error.statusCode != 401) rethrow;
-      _recommendationLog.warning(
-        'Recommendation auth expired; retrying public discovery without credentials.',
-      );
-      response = await _backend.post(
-        '/recommendations/next/',
-        payload,
-        authenticated: false,
-      );
-    }
-
-    final raw = (response['queue'] ?? response['recommendations']) as List? ?? const [];
     final result = <Song>[];
-
-    for (final item in raw.whereType<Map>()) {
-      final song = Song(
-        id: item['id']?.toString() ?? '',
-        title: item['title']?.toString() ?? '',
-        artist: item['artist']?.toString() ?? 'Unknown Artist',
-        album: item['album']?.toString(),
-        imageUrl: item['imageUrl']?.toString() ?? item['image_url']?.toString() ?? '',
-        mediaUrl: item['media_url']?.toString() ?? '',
-        language: item['language']?.toString(),
-        durationSeconds: int.tryParse(item['duration']?.toString() ?? ''),
-        tempo: double.tryParse(item['tempo']?.toString() ?? ''),
-        genre: item['genre']?.toString() ?? item['category']?.toString(),
-      );
-      if (song.id.isNotEmpty && song.title.isNotEmpty) result.add(song);
+    final artistCounts = <String, int>{};
+    for (final entry in ranked) {
+      if (result.length >= limit.clamp(1, 50)) break;
+      final artist = entry.song.artist.toLowerCase().trim();
+      final count = artistCounts[artist] ?? 0;
+      if (count >= 3) continue;
+      artistCounts[artist] = count + 1;
+      result.add(entry.song);
     }
-
-    _recommendationLog.success('Backend filtered queue: ${result.length} songs');
+    _recommendationLog.success('Local smart queue ranked ${result.length} tracks from ${unique.length} candidates.');
     return result;
   }
 
-  Map<String, dynamic> _songPayload(Song song) => {
-    'id': song.id,
-    'title': song.title,
-    'artist': song.artist,
-    'album': song.album ?? '',
-    'language': song.language ?? '',
-    'duration': song.durationSeconds ?? 0,
-    'tempo': song.tempo ?? 0,
-    'genre': song.genre ?? '',
-  };
-
-  Future<void> _sendEvent(Song song, String type, {double position = 0}) async {
-    if (!await _services.enabled('listening_sync')) return;
-    try {
-      await _backend.post('/listening/events/', {
-        'song_id': song.id, 'title': song.title, 'artist': song.artist,
-        'album': song.album ?? '', 'event_type': type,
-        'position_seconds': position, 'duration_seconds': song.durationSeconds ?? 0,
-        'metadata': {'image_url': song.imageUrl, 'language': song.language ?? '', 'tempo': song.tempo ?? 0, 'genre': song.genre ?? ''},
-      });
-    } catch (_) {}
+  double _score(Song candidate, Song current) {
+    var score = 0.0;
+    final artist = candidate.artist.toLowerCase();
+    if (artist == current.artist.toLowerCase()) score += 2;
+    if (candidate.language != null && current.language != null &&
+        candidate.language!.toLowerCase() == current.language!.toLowerCase()) score += 3;
+    if (candidate.genre != null && current.genre != null &&
+        candidate.genre!.toLowerCase() == current.genre!.toLowerCase()) score += 2;
+    if (candidate.tempo != null && current.tempo != null) {
+      final delta = (candidate.tempo! - current.tempo!).abs();
+      score += delta <= 8 ? 2 : delta <= 20 ? 1 : 0;
+    }
+    if (candidate.durationSeconds != null && current.durationSeconds != null) {
+      final delta = (candidate.durationSeconds! - current.durationSeconds!).abs();
+      score += delta <= 12 ? 1 : 0;
+    }
+    final signal = _signals[candidate.id];
+    if (signal != null) {
+      score += ((signal['completions'] as num?)?.toDouble() ?? 0) * 0.2;
+      score -= ((signal['skips'] as num?)?.toDouble() ?? 0) * 1.5;
+    }
+    if (TrackNormalizer.isDuplicate(candidate, current)) score -= 10;
+    return score;
   }
 
   bool isLiked(String songId) => _likedIds.contains(songId);
@@ -143,67 +220,60 @@ class RecommendationService {
   }
 
   Future<void> syncLike(Song song, bool liked) async {
-    if (!await _services.enabled('listening_sync')) {
-      throw StateError(await _services.message('listening_sync'));
+    await _ensureLoaded();
+    setLikeLocally(song.id, liked);
+    final history = await _storage.read(key: _likesKey);
+    final rows = <Song>[];
+    if (history != null) {
+      try {
+        final decoded = jsonDecode(history);
+        if (decoded is List) {
+          rows.addAll(decoded.whereType<Map>().map((e) => Song.fromJson(Map<String, dynamic>.from(e))));
+        }
+      } catch (_) {}
     }
-    try {
-      final response = await _backend.post('/listening/likes/', {
-        'song_id': song.id, 'title': song.title, 'artist': song.artist,
-        'album': song.album ?? '', 'image_url': song.imageUrl,
-        'metadata': {'language': song.language ?? '', 'genre': song.genre ?? '', 'tempo': song.tempo ?? 0},
-      });
-      final serverLiked = response['liked'] == true;
-      if (serverLiked != liked) {
-        throw StateError('The server returned an unexpected like state.');
-      }
-      setLikeLocally(song.id, serverLiked);
-    } catch (error) {
-      throw StateError(error.toString());
-    }
+    rows.removeWhere((item) => item.id == song.id);
+    if (liked) rows.insert(0, song);
+    await _storage.write(key: _likesKey, value: jsonEncode(rows.map((e) => e.toJson()).toList()));
   }
 
   Future<bool> toggleLike(Song song) async {
     final liked = !isLiked(song.id);
-    setLikeLocally(song.id, liked);
-    try {
-      await syncLike(song, liked);
-      return liked;
-    } catch (error) {
-      setLikeLocally(song.id, !liked);
-      throw StateError(error.toString());
-    }
+    await syncLike(song, liked);
+    return liked;
   }
 
   Future<Set<String>> loadLikedIds() async {
-    try {
-      final response = await _backend.get('/listening/likes/');
-      final ids = (response['likes'] as List? ?? const []).whereType<Map>()
-          .map((item) => item['song_id']?.toString() ?? '')
-          .where((id) => id.isNotEmpty).toSet();
-      _likedIds..clear()..addAll(ids);
-    } catch (_) {}
+    await _ensureLoaded();
     return Set<String>.from(_likedIds);
   }
 
   Future<List<Song>> loadLikedSongs() async {
-    final response = await _backend.get('/listening/likes/');
-    return (response['likes'] as List? ?? const []).whereType<Map>().map((item) => Song(
-      id: item['song_id']?.toString() ?? '', title: item['title']?.toString() ?? '',
-      artist: item['artist']?.toString() ?? 'Unknown Artist', album: item['album']?.toString(),
-      imageUrl: item['image_url']?.toString() ?? '', mediaUrl: '',
-    )).where((song) => song.id.isNotEmpty).toList();
+    await _ensureLoaded();
+    final raw = await _storage.read(key: _likesKey);
+    if (raw == null) return [];
+    try {
+      final decoded = jsonDecode(raw);
+      return decoded is List
+          ? decoded.whereType<Map>().map((e) => Song.fromJson(Map<String, dynamic>.from(e))).toList()
+          : [];
+    } catch (_) {
+      return [];
+    }
   }
 
-  Future<void> recordLike(Song song) => toggleLike(song).then((_) {});
+  Future<List<Song>> loadHistory({int limit = 200}) async {
+    final rows = await _history();
+    return rows.take(limit).map((row) => Song.fromJson(row)).toList();
+  }
+
+  Future<void> recordLike(Song song) async => syncLike(song, true);
 
   Future<void> recordDislike(Song song) async {
-    if (!await _services.enabled('listening_sync')) throw StateError(await _services.message('listening_sync'));
-    await _backend.post('/listening/events/', {
-      'song_id': song.id, 'title': song.title, 'artist': song.artist,
-      'album': song.album ?? '', 'event_type': 'dislike',
-      'position_seconds': 0, 'duration_seconds': song.durationSeconds ?? 0,
-      'metadata': {'image_url': song.imageUrl, 'language': song.language ?? '', 'genre': song.genre ?? '', 'tempo': song.tempo ?? 0},
-    });
+    await _ensureLoaded();
+    _dislikedIds.add(song.id);
+    _dislikedArtists.add(song.artist.toLowerCase().trim());
+    await _storage.write(key: _dislikesKey, value: jsonEncode(_dislikedIds.toList()));
+    await _storage.write(key: _dislikedArtistsKey, value: jsonEncode(_dislikedArtists.toList()));
   }
-
 }
