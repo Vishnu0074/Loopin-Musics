@@ -444,22 +444,13 @@ class GlobalAudioService with WidgetsBindingObserver {
     // authenticated CORS-enabled stream proxy on web; keep direct provider
     // playback first on native platforms where it is more resilient and avoids
     // ephemeral JWT token expirations.
-    final accessToken = kIsWeb ? await AuthService().accessToken() : null;
-    if (!_realtime.isPlaybackOwner || selectionGeneration != _playSelectionGeneration) return;
-    String? proxyMediaUrl;
-    if (kIsWeb && accessToken != null && accessToken.isNotEmpty) {
-      final proxyUri = Uri.parse(
-        '${AuthService.baseUrl}/catalog/music/stream/${Uri.encodeComponent(song.id)}/',
-      ).replace(queryParameters: {'proxy': '1', 'token': accessToken});
-      proxyMediaUrl = proxyUri.toString();
-    }
     final playableSong = Song(
       id: song.id,
       title: TrackNormalizer.unescapeHtml(song.title),
       artist: TrackNormalizer.unescapeHtml(song.artist),
       album: song.album != null ? TrackNormalizer.unescapeHtml(song.album!) : null,
       imageUrl: song.imageUrl,
-      mediaUrl: kIsWeb ? (proxyMediaUrl ?? directMediaUrl) : directMediaUrl,
+      mediaUrl: directMediaUrl,
       isrc: song.isrc,
       language: song.language,
       durationSeconds: song.durationSeconds,
@@ -531,21 +522,8 @@ class GlobalAudioService with WidgetsBindingObserver {
     unawaited(_ensureRecommendations(force: true));
   }
 
-  Future<String?> _resolvePlaybackUrl(Song song, {required String quality}) async {
-    final direct = await MonochromeApi().resolveStream(song, quality: quality);
-    if (direct == null) return null;
-
-    final token = await AuthService().accessToken();
-    // The Django proxy is required for browser CORS, but native Windows and
-    // mobile players should use the provider URL directly. Proxying every
-    // queued track on native platforms can turn a valid stream into a response
-    // that the platform audio decoder cannot consume reliably.
-    if (!kIsWeb || token == null || token.isEmpty) return direct;
-
-    return Uri.parse(
-      '${AuthService.baseUrl}/catalog/music/stream/${Uri.encodeComponent(song.id)}/',
-    ).replace(queryParameters: {'proxy': '1', 'token': token}).toString();
-  }
+  Future<String?> _resolvePlaybackUrl(Song song, {required String quality}) =>
+      MonochromeApi().resolveStream(song, quality: quality);
 
   Future<List<Song>> _resolveRemoteQueue(List<Song> songs) async {
     final resolved = <Song>[];
