@@ -478,6 +478,10 @@ class GlobalAudioService with WidgetsBindingObserver {
       await setQueue([playableSong], selectionGeneration: selectionGeneration);
     } catch (error) {
       if (!_realtime.isPlaybackOwner || selectionGeneration != _playSelectionGeneration) return;
+      _audioLog.warning('Direct Monochrome audio source failed: $error');
+      rethrow;
+    }
+    if (!_realtime.isPlaybackOwner || selectionGeneration != _playSelectionGeneration) return;
       _audioLog.warning('Direct audio source failed: $error');
       if (proxyMediaUrl == null) rethrow;
       final proxySong = Song(
