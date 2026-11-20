@@ -16,6 +16,12 @@ Configure an alternate Tracks Streamer host with:
 flutter run --dart-define=MONOCHROME_TRACKS_API=https://tracks.monochrome.st
 ```
 
+To enable optional account endpoints, supply your own compatible Loopin backend at launch:
+
+```bash
+flutter run --dart-define=LOOPIN_API_URL=https://your-backend.example/api
+```
+
 ## Project notes
 
 The original Loopin Django backend and IDE extension are intentionally not included in this repository. Authentication-backed features and cross-device Listen Together require a separately deployed backend; local playback, discovery and personal-library features do not.
