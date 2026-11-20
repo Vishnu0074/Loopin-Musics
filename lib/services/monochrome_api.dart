@@ -20,10 +20,19 @@ class MonochromeApi {
     defaultValue: '',
   );
 
-  List<String> get _hosts => <String>{
-    baseUrl,
-    ..._additionalBaseUrls.split(',').map((value) => value.trim()).where((value) => value.isNotEmpty),
-  }.map((value) => value.replaceAll(RegExp(r'/+
+  List<String> get _hosts {
+    final candidates = <String>{
+      baseUrl,
+      ..._additionalBaseUrls.split(',').map((value) => value.trim()).where((value) => value.isNotEmpty),
+    };
+    return candidates.map((value) {
+      var host = value.trim();
+      while (host.endsWith('/')) {
+        host = host.substring(0, host.length - 1);
+      }
+      return host;
+    }).where((value) => value.isNotEmpty).toList();
+  }
 
   final http.Client _client;
   final Map<String, List<Song>> _searchCache = {};
