@@ -13,8 +13,19 @@ A Flutter music player built on the original Loopin application experience and a
 Configure an alternate Tracks Streamer host with:
 
 ```bash
-flutter run --dart-define=MONOCHROME_TRACKS_API=https://tracks.monochrome.st
+flutter run \
+  --dart-define=MONOCHROME_TRACKS_API=https://tracks.monochrome.st
 ```
+
+If you have an authorized alternate Tracks Streamer instance, set its URL as the primary host and optionally provide comma-separated fallbacks:
+
+```bash
+flutter run \
+  --dart-define=MONOCHROME_TRACKS_API=https://your-authorized-host.example \
+  --dart-define=MONOCHROME_TRACKS_APIS=https://fallback-one.example,https://fallback-two.example
+```
+
+Every configured host must implement the Tracks Streamer `/search/tracks` and `/track/{trackId}` routes.
 
 To enable optional account endpoints, supply your own compatible Loopin backend at launch:
 
