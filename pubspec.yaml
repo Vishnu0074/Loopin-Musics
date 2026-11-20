@@ -1,4 +1,4 @@
-name: loopin
+name: loopin_v2
 description: "Loopin a music player app"
 publish_to: 'none'
 
@@ -18,7 +18,6 @@ dependencies:
   just_audio_windows_plus: ^0.5.3
   just_audio_background: ^0.0.1-beta.10
   audio_service: ^0.18.10
-  dart_des: ^1.0.2
   flutter_bloc: ^9.1.1
   flutter_secure_storage: ^9.2.4
   web_socket_channel: ^3.0.3
