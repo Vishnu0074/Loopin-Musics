@@ -30,6 +30,7 @@ class GlobalAudioService with WidgetsBindingObserver {
   final _queueController = StreamController<List<Song>>.broadcast();
   final _currentIndexController = StreamController<int?>.broadcast();
   final _recommendations = RecommendationService();
+  final _monochrome = MonochromeApi();
   final _lyricsService = LyricsService();
   LyricsData? _currentLyricsData;
   String? _currentLyricsSongId;
@@ -504,7 +505,7 @@ class GlobalAudioService with WidgetsBindingObserver {
   }
 
   Future<String?> _resolvePlaybackUrl(Song song, {required String quality}) =>
-      MonochromeApi().resolveStream(song, quality: quality);
+      _monochrome.resolveStream(song, quality: quality);
 
   Future<List<Song>> _resolveRemoteQueue(List<Song> songs) async {
     final resolved = <Song>[];
@@ -1651,6 +1652,7 @@ class GlobalAudioService with WidgetsBindingObserver {
       song: 'No Song Playing',
       text: 'Play a song with lyrics to see live verses right on your home screen.',
     ));
+    _monochrome.dispose();
     _queueController.close();
     _currentIndexController.close();
     _player?.dispose();
