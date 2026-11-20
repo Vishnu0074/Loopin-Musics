@@ -6,7 +6,7 @@ import '../models/auth_user.dart';
 class AuthException implements Exception { final String message; final int? statusCode; const AuthException(this.message, {this.statusCode}); @override String toString()=>message; }
 
 class AuthService {
-  static const baseUrl=String.fromEnvironment('LOOPIN_API_URL',defaultValue:'https://loopin-api-xuaf.onrender.com/api');
+  static const baseUrl=String.fromEnvironment('LOOPIN_API_URL',defaultValue:'');
   static final _storage=AppStorage();
   static Future<void> Function()? onSessionExpired;
   static bool _expirationHandled = false;
@@ -15,7 +15,7 @@ class AuthService {
   String? _firstError(Map<String,dynamic> data){for(final v in data.values){if(v is List&&v.isNotEmpty)return v.first.toString();if(v is Map&&v.isNotEmpty)return _firstError(v.cast<String,dynamic>());if(v is String)return v;}return null;}
   Map<String,dynamic> _decode(http.Response r){if(r.body.isEmpty)return {}; final d=jsonDecode(r.body);return d is Map<String,dynamic>?d:Map<String,dynamic>.from(d as Map);}
 
-  Future<Map<String,dynamic>> _request(String method,String path,{Map<String,dynamic>? body,bool authenticated=true,bool retry=true}) async {
+  Future<Map<String,dynamic>> _request(String method,String path,{Map<String,dynamic>? body,bool authenticated=true,bool retry=true}) async {\n    if (baseUrl.isEmpty) {\n      throw const AuthException('Account features need a configured backend. Set LOOPIN_API_URL when launching Loopin V2.');\n    }
     var token=await accessToken();
     final headers=<String,String>{'Content-Type':'application/json'};
     if(authenticated&&token!=null)headers['Authorization']='Bearer $token';
@@ -53,7 +53,7 @@ class AuthService {
   Future<void> _save(Map<String,dynamic> d) async {_expirationHandled=false;await _storage.write(key:_access,value:d['access']?.toString());await _storage.write(key:_refresh,value:d['refresh']?.toString());if(d['user'] is Map)await _storage.write(key:_user,value:jsonEncode(d['user']));}
   Future<String?> accessToken()=>_storage.read(key:_access);
   Future<String?> _refreshToken()=>_storage.read(key:_refresh);
-  Future<bool> refreshAccessToken() async {final refresh=await _refreshToken();if(refresh==null)return false;try{final r=await http.post(Uri.parse('$baseUrl/auth/token/refresh/'),headers:{'Content-Type':'application/json'},body:jsonEncode({'refresh':refresh})).timeout(const Duration(seconds:15));if(r.statusCode==200){final d=_decode(r);await _storage.write(key:_access,value:d['access']?.toString());if(d['refresh']!=null)await _storage.write(key:_refresh,value:d['refresh']?.toString());return true;}if(r.statusCode==400||r.statusCode==401){await _expireSession();return false;}return false;}catch(_){return false;}}
+  Future<bool> refreshAccessToken() async {if(baseUrl.isEmpty)return false;final refresh=await _refreshToken();if(refresh==null)return false;try{final r=await http.post(Uri.parse('$baseUrl/auth/token/refresh/'),headers:{'Content-Type':'application/json'},body:jsonEncode({'refresh':refresh})).timeout(const Duration(seconds:15));if(r.statusCode==200){final d=_decode(r);await _storage.write(key:_access,value:d['access']?.toString());if(d['refresh']!=null)await _storage.write(key:_refresh,value:d['refresh']?.toString());return true;}if(r.statusCode==400||r.statusCode==401){await _expireSession();return false;}return false;}catch(_){return false;}}
   Future<AuthUser?> restore() async {
     final token = await accessToken();
     final refresh = await _refreshToken();
