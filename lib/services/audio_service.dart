@@ -482,25 +482,6 @@ class GlobalAudioService with WidgetsBindingObserver {
       rethrow;
     }
     if (!_realtime.isPlaybackOwner || selectionGeneration != _playSelectionGeneration) return;
-      _audioLog.warning('Direct audio source failed: $error');
-      if (proxyMediaUrl == null) rethrow;
-      final proxySong = Song(
-        id: playableSong.id,
-        title: playableSong.title,
-        artist: playableSong.artist,
-        album: playableSong.album,
-        imageUrl: playableSong.imageUrl,
-        mediaUrl: proxyMediaUrl,
-        isrc: playableSong.isrc,
-        language: playableSong.language,
-        durationSeconds: playableSong.durationSeconds,
-        tempo: playableSong.tempo,
-        genre: playableSong.genre,
-        lyricsId: playableSong.lyricsId,
-      );
-      await setQueue([proxySong], selectionGeneration: selectionGeneration);
-    }
-    if (!_realtime.isPlaybackOwner || selectionGeneration != _playSelectionGeneration) return;
     final player = await this.player;
 
     // just_audio's play() future completes when playback stops or finishes,
