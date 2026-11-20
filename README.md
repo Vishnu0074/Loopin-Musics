@@ -1,30 +1,23 @@
-# Loopin
+# Loopin V2
 
-Loopin is a dark-themed Flutter music player for mobile and desktop.
+A Flutter music player built on the original Loopin application experience and adapted to use Monochrome's open-source Tracks Streamer API.
 
-## Windows desktop build
+## Music provider
 
-Install Flutter stable and Visual Studio 2022 with the **Desktop development with C++** workload, then run in PowerShell from the repository root:
+- Search metadata: Monochrome Tracks Streamer
+- Playback URL resolution: Tracks Streamer `/track/{trackId}`
+- Smart recommendations: local listening signals, favourites, skips, language, genre, tempo and artist affinity
+- Lyrics: LRCLIB with Lyrics.ovh fallback
+- Library, liked songs, playlists and listening history: local encrypted storage on native platforms and browser storage on web
 
-```powershell
-flutter create --platforms=windows .
-flutter pub get
-flutter build windows --release
+Configure an alternate Tracks Streamer host with:
+
+```bash
+flutter run --dart-define=MONOCHROME_TRACKS_API=https://tracks.monochrome.st
 ```
 
-The project originally started as a mobile-first Flutter app, so Flutter's standard Windows runner is generated before building. The Windows CI workflow runs these commands and uploads the release output as a GitHub Actions artifact.
+## Project notes
 
-Windows playback uses `just_audio_windows`. Android notification and Android audio-session setup remain platform-gated, so they do not block desktop initialization.
+The original Loopin Django backend and IDE extension are intentionally not included in this repository. Authentication-backed features and cross-device Listen Together require a separately deployed backend; local playback, discovery and personal-library features do not.
 
-## Web and macOS Now Playing integration
-
-On supported browsers, Loopin publishes the active track title, artist, album, and
-cover artwork through the browser Media Session API. This allows macOS to show
-track details and artwork in its system Now Playing panel when playback is
-running in the browser. The same integration exposes play/pause, previous/next,
-and seek actions where the browser supports them. Native platforms continue to
-use their existing audio background integrations.
-
-## High-resolution artwork
-
-JioSaavn search results normalize known thumbnail URLs to the 500×500 cover variant when the provider exposes size variants. UI components should use the normalized `Song.imageUrl` and provide a fallback for unavailable artwork.
+This project reuses the Loopin Flutter application source. Monochrome's upstream project is available at https://github.com/Vishnu0074/monochrome. Retain the upstream project's license and notices when redistributing any of its code.
