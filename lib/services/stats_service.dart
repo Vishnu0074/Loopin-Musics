@@ -151,6 +151,21 @@ class StatsService {
     final localDailySeconds = (local['daily_seconds'] as num?)?.toInt() ?? 0;
     final localDayStreak = (local['streak_days'] as num?)?.toInt() ?? 0;
     final localHourStreak = (local['streak_hours'] as num?)?.toInt() ?? 0;
+    final localSongPlays = Map<String, dynamic>.from(
+      local['song_plays'] as Map? ?? const {},
+    );
+    final localTotalPlays = localSongPlays.values.whereType<Map>().fold<int>(
+      0,
+      (sum, row) => sum + ((row['plays'] as num?)?.toInt() ?? 0),
+    );
+    var localLikes = 0;
+    try {
+      final rawLikes = await _storage.read(key: 'loopin_v2_liked_songs');
+      if (rawLikes != null) {
+        final decodedLikes = jsonDecode(rawLikes);
+        if (decodedLikes is List) localLikes = decodedLikes.length;
+      }
+    } catch (_) {}
 
     final remoteHours =
         (remote['total_played_hours'] as num?)?.toDouble() ?? 0.0;
@@ -205,8 +220,8 @@ class StatsService {
       'listening_streak_days': finalStreak,
       'listening_streak_hours':
           (remote['listening_streak_hours'] as num?)?.toInt() ?? localHourStreak,
-      'total_plays': remote['total_plays'] ?? topSongs.length,
-      'total_likes': remote['total_likes'] ?? 0,
+      'total_plays': remote['total_plays'] ?? localTotalPlays,
+      'total_likes': remote['total_likes'] ?? localLikes,
       'top_genre': remote['top_genre'] ?? 'Discovering',
       'genres': remote['genres'] ?? const [],
       'top_songs': topSongs,
