@@ -1,0 +1,103 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      monochrome_tracks_api:
+        description: Authorized Monochrome Tracks Streamer base URL (optional)
+        required: false
+        type: string
+        default: ""
+      monochrome_tracks_apis:
+        description: Comma-separated authorized fallback API URLs (optional)
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-android:
+    name: Build release APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;27.0.12077973"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.44.0"
+          cache: true
+
+      - name: Accept Android SDK licenses
+        run: yes | flutter doctor --android-licenses
+
+      - name: Show build tool versions
+        run: |
+          flutter --version
+          java -version
+          flutter doctor -v
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Build release APK
+        env:
+          MONOCHROME_TRACKS_API: ${{ inputs.monochrome_tracks_api }}
+          MONOCHROME_TRACKS_APIS: ${{ inputs.monochrome_tracks_apis }}
+        run: |
+          DEFINES=()
+          if [ -n "$MONOCHROME_TRACKS_API" ]; then
+            DEFINES+=(--dart-define=MONOCHROME_TRACKS_API="$MONOCHROME_TRACKS_API")
+          fi
+          if [ -n "$MONOCHROME_TRACKS_APIS" ]; then
+            DEFINES+=(--dart-define=MONOCHROME_TRACKS_APIS="$MONOCHROME_TRACKS_APIS")
+          fi
+          flutter build apk --release "${DEFINES[@]}"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: loopin-v2-android-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
